@@ -9,7 +9,8 @@
   .topbar { background:#fff; padding:14px 28px; display:flex; align-items:center; gap:14px;
             box-shadow:0 1px 4px rgba(0,0,0,.08); position:sticky; top:0; z-index:10; flex-wrap:wrap; }
   .topbar h1 { font-size:18px; margin:0 16px 0 0; white-space:nowrap; }
-  .topbar input#topic { flex:1; min-width:240px; padding:9px 14px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+  .topbar input#topic { flex:1; min-width:220px; padding:9px 14px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+  .topbar select { padding:9px 10px; border:1px solid #ddd; border-radius:8px; font-size:14px; font-family:inherit; background:#fff; }
   button { padding:9px 18px; border:none; border-radius:8px; font-size:14px; cursor:pointer; font-family:inherit; }
   button:disabled { opacity:.45; cursor:not-allowed; }
   .btn-primary { background:#2b6cb0; color:#fff; }
@@ -26,6 +27,15 @@
   #log { font-size:13px; color:#666; max-height:110px; overflow-y:auto; line-height:1.7; }
   .card { background:#fff; border-radius:10px; margin-bottom:20px; overflow:hidden;
           box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  /* 主题化预览（变量由 JS 按所选主题设置，色板来自 ppt-maker skill） */
+  #cards { --deck-bg:#fff; --deck-fg:#333; --deck-muted:#666; --deck-accent:#2b6cb0; }
+  .card.themed { background:var(--deck-bg); color:var(--deck-fg); }
+  .card.themed .card-head { color:var(--deck-muted); border-bottom:1px solid rgba(255,255,255,.14); }
+  .card.themed .col-text input.title, .card.themed .col-text textarea,
+  .card.themed .img-tools input { background:rgba(255,255,255,.08); color:var(--deck-fg);
+                                   border:1px solid rgba(255,255,255,.18); }
+  .card.themed .img-area { background:rgba(255,255,255,.06); }
+  .card.themed .card-head { border-left:5px solid var(--deck-accent); }
   .card-head { padding:10px 20px; font-size:14px; color:#555; border-bottom:1px solid #f0f0f0;
                display:flex; justify-content:space-between; align-items:center; }
   .card-body { padding:20px; display:flex; gap:22px; }
@@ -55,8 +65,14 @@
 <div class="topbar">
   <h1>PPT 可视化制作</h1>
   <input id="topic" placeholder="输入主题，如：青少年为什么要学编程" />
+  <select id="theme">
+    <option value="blue">海洋蓝</option>
+    <option value="dark">石墨金</option>
+    <option value="green">墨绿</option>
+  </select>
   <button class="btn-primary" id="btn-gen" onclick="doGenerate()">生成</button>
   <button class="btn-outline" id="btn-export" onclick="doExport()" disabled>导出 pptx</button>
+  <button class="btn-outline" id="btn-export-html" onclick="doExportHtml()" disabled>导出 HTML</button>
 </div>
 <div class="main">
   <div class="progress">
@@ -74,6 +90,21 @@
 <script>
 let polling = null;
 
+const THEMES_JS = {
+  blue:  {bg:'#0f2a4a', accent:'#3b82f6', fg:'#ffffff', muted:'#b6c7dc'},
+  dark:  {bg:'#111827', accent:'#f59e0b', fg:'#f9fafb', muted:'#9ca3af'},
+  green: {bg:'#062e21', accent:'#22c55e', fg:'#ecfdf5', muted:'#a7c4b6'},
+};
+
+function applyTheme(name) {
+  const t = THEMES_JS[name] || THEMES_JS.blue;
+  const el = document.getElementById('cards');
+  el.style.setProperty('--deck-bg', t.bg);
+  el.style.setProperty('--deck-fg', t.fg);
+  el.style.setProperty('--deck-muted', t.muted);
+  el.style.setProperty('--deck-accent', t.accent);
+}
+
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -87,12 +118,14 @@ function toast(msg, ms = 3000) {
 async function doGenerate() {
   const topic = document.getElementById('topic').value.trim();
   if (!topic) { toast('请先输入主题'); return; }
+  const theme = document.getElementById('theme').value;
   const r = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'},
-                                           body: JSON.stringify({topic})});
+                                           body: JSON.stringify({topic, theme})});
   const d = await r.json();
   if (!r.ok) { toast(d.error); return; }
   document.getElementById('btn-gen').disabled = true;
   document.getElementById('btn-export').disabled = true;
+  document.getElementById('btn-export-html').disabled = true;
   if (polling) clearInterval(polling);
   polling = setInterval(refresh, 1000);
   refresh();
@@ -103,11 +136,13 @@ async function refresh() {
   const s = await r.json();
   renderSteps(s.phase);
   renderLog(s.log);
+  applyTheme(s.theme);
   renderCards(s);
   if (s.phase === 'idle' || s.phase === 'ready') {
     if (polling) { clearInterval(polling); polling = null; }
     document.getElementById('btn-gen').disabled = false;
     document.getElementById('btn-export').disabled = (s.phase !== 'ready' || !s.slides.length);
+    document.getElementById('btn-export-html').disabled = (s.phase !== 'ready' || !s.slides.length);
     if (s.phase === 'ready' && !s.slides.length) { /* 保留 */ }
     if (s.phase === 'idle' && s.log.length && s.slides.length === 0) {
       const last = s.log[s.log.length - 1];
@@ -155,7 +190,7 @@ function renderCards(s) {
       </div>`;
 
     if (isCover) {
-      return `<div class="card">
+      return `<div class="card themed">
         <div class="card-head">页 1 · 封面 <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
         <div class="card-body cover">
           <input class="title" id="title-${i}" value="${esc(sl.title)}">
@@ -164,7 +199,7 @@ function renderCards(s) {
         </div>
       </div>`;
     }
-    return `<div class="card">
+    return `<div class="card themed">
       <div class="card-head">页 ${i + 1} · ${esc(sl.title)} <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
       <div class="card-body">
         <div class="col-text">
@@ -206,6 +241,14 @@ async function doExport() {
   const d = await r.json();
   if (!r.ok) { toast(d.error); return; }
   toast('已导出：' + d.path, 8000);
+}
+
+async function doExportHtml() {
+  const r = await fetch('/api/export_html', {method:'POST'});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('已导出 HTML：' + d.path, 8000);
+  window.open(d.path.replace(/\\/g, '/'), '_blank');
 }
 </script>
 </body>
