@@ -121,42 +121,182 @@ def _add_section(slide, title, points, t):
     line.line.fill.background()
 
 
-def _add_content(slide, title, points, image_path, t):
-    _add_title(slide, title, t)
-    if image_path and os.path.exists(image_path):
-        text_box = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(6.2), Inches(4.9))
-        img_area_x, img_area_y = Inches(7.2), Inches(0.9)
-        img_area_w, img_area_h = Inches(5.5), Inches(5.7)
-    else:
-        text_box = slide.shapes.add_textbox(Inches(0.6), Inches(1.9), Inches(12.0), Inches(4.9))
-        img_area_x = img_area_y = img_area_w = img_area_h = 0
+def _split_point(pt: str):
+    """拆两级：'标题：描述' → (标题, 描述)；无冒号 → (原文, '')。"""
+    for sep in ("：", ":"):
+        if sep in pt:
+            title, desc = pt.split(sep, 1)
+            return title.strip(), desc.strip()
+    return pt.strip(), ""
 
-    body_size = _fit_body_size(points)
-    tf = text_box.text_frame
+
+def _resolve_layout(layout, points, has_image):
+    """layout 有值用，否则按内容特征兜底决策。"""
+    if layout:
+        return layout
+    n = len(points)
+    if has_image:
+        return "image-top" if n >= 4 else "image-right"
+    if n <= 2:
+        return "center"
+    if n == 3:
+        return "cards"
+    return "columns"
+
+
+def _add_image(slide, image_path, x, y, w, h) -> bool:
+    """等比缩放图片放入 (x,y,w,h) 区域，成功返回 True。"""
+    if not (image_path and os.path.exists(image_path)):
+        return False
+    with Image.open(image_path) as im:
+        iw, ih = im.size
+    scale = min(w / iw, h / ih)
+    dw, dh = int(iw * scale), int(ih * scale)
+    slide.shapes.add_picture(image_path, x + int((w - dw) / 2), y + int((h - dh) / 2),
+                             width=Emu(dw), height=Emu(dh))
+    return True
+
+
+def _add_point_list(slide, points, left, top, width, height, t, start=0, title_size=16, desc_size=13):
+    """渲染两级要点（编号 + 标题 accent 加粗 + 描述 muted 缩进）。"""
+    box = slide.shapes.add_textbox(left, top, width, height)
+    tf = box.text_frame
     tf.word_wrap = True
     for i, pt in enumerate(points):
+        title, desc = _split_point(pt)
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        p.space_before = Pt(16)
+        p.space_before = Pt(20)
         run = p.add_run()
-        run.text = f"▸ {pt}"
+        run.text = f"{start + i + 1:02d}  {title}"
         run.font.name = FONT
-        run.font.size = Pt(body_size)
+        run.font.size = Pt(title_size)
+        run.font.bold = True
+        run.font.color.rgb = t["accent"]
+        if desc:
+            p2 = tf.add_paragraph()
+            p2.space_before = Pt(2)
+            run2 = p2.add_run()
+            run2.text = "      " + desc
+            run2.font.name = FONT
+            run2.font.size = Pt(desc_size)
+            run2.font.color.rgb = t["muted"]
+    return box
+
+
+def _add_content_image_right(slide, title, points, image_path, t):
+    _add_title(slide, title, t)
+    _add_point_list(slide, points, Inches(0.6), Inches(1.8), Inches(6.2), Inches(4.9), t)
+    _add_image(slide, image_path, Inches(7.2), Inches(0.9), Inches(5.5), Inches(5.7))
+
+
+def _add_content_image_left(slide, title, points, image_path, t):
+    _add_image(slide, image_path, Inches(0.6), Inches(0.9), Inches(5.5), Inches(5.7))
+    bar = slide.shapes.add_shape(1, Inches(7.2), Inches(0.8), Inches(0.09), Inches(0.52))
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = t["accent"]
+    bar.line.fill.background()
+    _set_text(slide.shapes.add_textbox(Inches(7.45), Inches(0.7), Inches(5.3), Inches(0.9)).text_frame,
+              title, _fit_title_size(title), t["fg"], bold=True)
+    _add_point_list(slide, points, Inches(7.2), Inches(1.8), Inches(5.5), Inches(4.9), t)
+
+
+def _add_content_image_top(slide, title, points, image_path, t):
+    _add_title(slide, title, t)
+    _add_image(slide, image_path, Inches(0.6), Inches(1.7), Inches(12.0), Inches(2.8))
+    _add_point_list(slide, points, Inches(0.6), Inches(4.6), Inches(12.0), Inches(2.5), t)
+
+
+def _add_content_image_full(slide, title, points, image_path, t):
+    _add_image(slide, image_path, 0, 0, SLIDE_W, SLIDE_H)
+    card = slide.shapes.add_shape(1, Inches(0.6), Inches(1.2), Inches(6.2), Inches(5.0))
+    card.fill.solid()
+    card.fill.fore_color.rgb = t["bg"]
+    card.line.color.rgb = t["accent"]
+    card.line.width = Pt(1.5)
+    _set_text(slide.shapes.add_textbox(Inches(0.95), Inches(1.4), Inches(5.5), Inches(0.9)).text_frame,
+              title, 26, t["fg"], bold=True)
+    _add_point_list(slide, points, Inches(0.95), Inches(2.3), Inches(5.5), Inches(3.7), t)
+
+
+def _add_content_cards(slide, title, points, image_path, t):
+    _add_title(slide, title, t)
+    n = min(len(points), 4)
+    gap = Inches(0.4)
+    total = Inches(11.6)
+    card_w = int((total - gap * (n - 1)) / n)
+    for i in range(n):
+        title_text, desc = _split_point(points[i])
+        x = Inches(0.7) + (card_w + gap) * i
+        card = slide.shapes.add_shape(5, x, Inches(2.1), card_w, Inches(4.2))
+        card.fill.solid()
+        card.fill.fore_color.rgb = t["bg"]
+        card.line.color.rgb = t["accent"]
+        card.line.width = Pt(1.25)
+        top = slide.shapes.add_shape(1, x, Inches(2.1), card_w, Inches(0.07))
+        top.fill.solid()
+        top.fill.fore_color.rgb = t["accent"]
+        top.line.fill.background()
+        _set_text(slide.shapes.add_textbox(x + Inches(0.3), Inches(2.4), card_w - Inches(0.6), Inches(0.6)).text_frame,
+                  f"{i + 1:02d}", 26, t["accent"], bold=True)
+        box = slide.shapes.add_textbox(x + Inches(0.3), Inches(3.1), card_w - Inches(0.6), Inches(3.0))
+        tf = box.text_frame
+        tf.word_wrap = True
+        run = tf.paragraphs[0].add_run()
+        run.text = title_text
+        run.font.name = FONT
+        run.font.size = Pt(16)
+        run.font.bold = True
+        run.font.color.rgb = t["fg"]
+        if desc:
+            p2 = tf.add_paragraph()
+            p2.space_before = Pt(6)
+            run2 = p2.add_run()
+            run2.text = desc
+            run2.font.name = FONT
+            run2.font.size = Pt(12)
+            run2.font.color.rgb = t["muted"]
+
+
+def _add_content_columns(slide, title, points, image_path, t):
+    _add_title(slide, title, t)
+    mid = (len(points) + 1) // 2
+    _add_point_list(slide, points[:mid], Inches(0.6), Inches(1.8), Inches(5.8), Inches(4.9), t, start=0)
+    _add_point_list(slide, points[mid:], Inches(6.8), Inches(1.8), Inches(5.8), Inches(4.9), t, start=mid)
+
+
+def _add_content_center(slide, title, points, image_path, t):
+    _set_text(slide.shapes.add_textbox(Inches(1), Inches(2.2), Inches(11.3), Inches(1.2)).text_frame,
+              title, 40, t["fg"], bold=True, align=PP_ALIGN.CENTER)
+    box = slide.shapes.add_textbox(Inches(1.5), Inches(3.8), Inches(10.3), Inches(2.4))
+    tf = box.text_frame
+    tf.word_wrap = True
+    for i, pt in enumerate(points):
+        title_text, desc = _split_point(pt)
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.space_before = Pt(18)
+        p.alignment = PP_ALIGN.CENTER
+        run = p.add_run()
+        run.text = title_text + (f"：{desc}" if desc else "")
+        run.font.name = FONT
+        run.font.size = Pt(22)
         run.font.color.rgb = t["muted"]
 
-    if image_path and os.path.exists(image_path):
-        with Image.open(image_path) as im:
-            w, h = im.size
-        scale = min(img_area_w / w, img_area_h / h)
-        disp_w, disp_h = int(w * scale), int(h * scale)
-        slide.shapes.add_picture(image_path, img_area_x + int((img_area_w - disp_w) / 2),
-                                 img_area_y + int((img_area_h - disp_h) / 2),
-                                 width=Emu(disp_w), height=Emu(disp_h))
-    elif not image_path:
-        rect = slide.shapes.add_shape(1, Inches(7.2), Inches(0.9), Inches(5.5), Inches(5.7))
-        rect.fill.solid()
-        rect.fill.fore_color.rgb = t["muted"]
-        rect.line.fill.background()
-        _set_text(rect.text_frame, "（图片生成失败）", 12, t["fg"], align=PP_ALIGN.CENTER)
+
+_CONTENT_LAYOUTS = {
+    "image-right": _add_content_image_right,
+    "image-left": _add_content_image_left,
+    "image-top": _add_content_image_top,
+    "image-full": _add_content_image_full,
+    "cards": _add_content_cards,
+    "columns": _add_content_columns,
+    "center": _add_content_center,
+}
+
+
+def _add_content(slide, title, points, image_path, t, layout=None):
+    has_image = bool(image_path and os.path.exists(image_path))
+    resolved = _resolve_layout(layout, points, has_image)
+    _CONTENT_LAYOUTS.get(resolved, _add_content_image_right)(slide, title, points, image_path, t)
 
 
 def _pick_chart_type(chart) -> str:
@@ -299,7 +439,8 @@ def build_ppt(slides: list[dict], image_paths: list[str | None], out_path: str,
         elif stype == "end":
             _add_end(slide, title, t)
         else:  # content / 未知 type
-            _add_content(slide, title, points, image_paths[i] if i < len(image_paths) else None, t)
+            _add_content(slide, title, points,
+                         image_paths[i] if i < len(image_paths) else None, t, s.get("layout"))
 
     prs.save(out_path)
     return out_path

@@ -181,6 +181,8 @@ const THEMES_JS = {
 };
 
 const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文', data:'图表', timeline:'时间线', compare:'对比', end:'总结'};
+const LAYOUT_LABEL = { 'image-right':'左文右图', 'image-left':'左图右文', 'image-top':'上图下文',
+  'image-full':'全宽图', 'cards':'三栏卡片', 'columns':'两栏', 'center':'居中' };
 
 function applyTheme(name) {
   const t = THEMES_JS[name] || THEMES_JS.blue;
@@ -337,13 +339,18 @@ function renderCards(s) {
     } else if (stype === 'end') {
       body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}"></div>`;
     } else {
-      body = `<div class="card-body"><div class="col-text">
+      const noImg = ['cards', 'columns', 'center'].includes(sl.layout);
+      const ptsPh = '每行一个要点（标题：描述）';
+      const textCol = `<div class="col-text">
         <input class="title" id="title-${i}" value="${esc(sl.title)}">
-        <textarea id="points-${i}" placeholder="每行一个要点">${esc(sl.points.join('\n'))}</textarea></div>
-        <div class="col-img"><div class="img-area">${imgHtml}</div>${imgTools}</div></div>`;
+        <textarea id="points-${i}" placeholder="${ptsPh}">${esc(sl.points.join('\n'))}</textarea></div>`;
+      body = noImg
+        ? `<div class="card-body">${textCol}</div>`
+        : `<div class="card-body">${textCol}<div class="col-img"><div class="img-area">${imgHtml}</div>${imgTools}</div></div>`;
     }
+    const layoutBadge = LAYOUT_LABEL[sl.layout] ? ` <span class="type-badge">${LAYOUT_LABEL[sl.layout]}</span>` : '';
     return `<div class="card themed">
-      <div class="card-head">页 ${i + 1} · <span class="type-badge">${label}</span> ${esc(sl.title)}${reviewBadge(sl)}
+      <div class="card-head">页 ${i + 1} · <span class="type-badge">${label}</span>${layoutBadge} ${esc(sl.title)}${reviewBadge(sl)}
         <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
       ${body}
     </div>`;

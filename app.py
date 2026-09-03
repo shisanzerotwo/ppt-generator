@@ -77,7 +77,8 @@ def _generation_worker(content: str, from_text: bool = False):
             state["slides"] = [
                 {"type": s.get("type", "content"), "title": s.get("title", ""),
                  "points": s.get("points", []), "image_prompt": s.get("image_prompt", ""),
-                 "chart": s.get("chart"), "image": None, "imageStatus": "pending",
+                 "chart": s.get("chart"), "layout": s.get("layout"),
+                 "image": None, "imageStatus": "pending",
                  "review": {"ok": True, "reason": "", "tries": 0}}
                 for s in slides
             ]
@@ -251,7 +252,8 @@ def api_refine():
                 state["slides"] = [
                     {"type": s.get("type", "content"), "title": s.get("title", ""),
                      "points": s.get("points", []), "image_prompt": s.get("image_prompt", ""),
-                     "chart": s.get("chart"), "image": None, "imageStatus": "pending",
+                     "chart": s.get("chart"), "layout": s.get("layout"),
+                     "image": None, "imageStatus": "pending",
                      "review": {"ok": True, "reason": "", "tries": 0}}
                     for s in new_slides
                 ]
@@ -318,7 +320,7 @@ def api_export():
     out_path = os.path.join(OUTPUT_DIR, f"{safe_topic}_{time.strftime('%Y%m%d_%H%M%S')}.pptx")
     builder.build_ppt(
         [{"type": s.get("type", "content"), "title": s["title"], "points": s["points"],
-          "image_prompt": s["image_prompt"], "chart": s.get("chart")} for s in slides],
+          "image_prompt": s["image_prompt"], "chart": s.get("chart"), "layout": s.get("layout")} for s in slides],
         [os.path.join(IMAGES_DIR, os.path.basename(s["image"])) if s["image"] else None for s in slides],
         out_path,
         theme=theme,
@@ -385,7 +387,7 @@ def api_export_pdf():
     pdf_path = os.path.join(OUTPUT_DIR, f"{safe_topic}_{stamp}.pdf")
     builder.build_ppt(
         [{"type": s.get("type", "content"), "title": s["title"], "points": s["points"],
-          "image_prompt": s["image_prompt"], "chart": s.get("chart")} for s in slides],
+          "image_prompt": s["image_prompt"], "chart": s.get("chart"), "layout": s.get("layout")} for s in slides],
         [os.path.join(IMAGES_DIR, os.path.basename(s["image"])) if s["image"] else None for s in slides],
         pptx_path, theme=theme, subtitle=topic,
     )

@@ -59,7 +59,8 @@ def test_normalize_cover_content_missing_prompt_fallback():
         {"type": "content", "title": "内容标题", "points": ["a"], "image_prompt": ""},
     ])
     assert out[0]["image_prompt"] == "封面标题，扁平插画风格"
-    assert out[1]["image_prompt"] == "内容标题，扁平插画风格"
+    # content 页无图时保持空（走无图布局，如卡片/两栏/居中）
+    assert out[1]["image_prompt"] == ""
 
 
 def test_normalize_keeps_present_prompt():

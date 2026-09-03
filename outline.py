@@ -21,18 +21,28 @@ PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个
 
 总页数必须控制在 8~10 页之间，绝对不要超过 10 页，不要过度分章。
 
-每页必须带 image_prompt（非空）：
-- cover 页：描述体现主题的封面插图
-- content 页：描述该页内容的具体场景，扁平插画风格
-- section 页：可给章节主题相关画面，也可留空字符串 ""
-- toc / end / data / timeline / compare 页：image_prompt 一律为 ""（空字符串）
+每页 image_prompt 规则：
+- cover 页：描述体现主题的封面插图（非空）
+- content 页：根据内容决定——具象场景/需要视觉冲击的，给画面描述（非空，走图文布局）；并列要点/概念性内容的，image_prompt 留空 ""（走卡片/两栏/居中布局）。同一份 PPT 建议混合图文页与无图页，避免全部同一布局
+- section / toc / end / data / timeline / compare 页：image_prompt 一律为 ""（空字符串）
 
-视觉规范：每页只讲一个观点；要点 2~3 条、每条不超过 20 字。
+视觉规范：每页只讲一个观点；要点 2~3 条。
+
+【要点格式】content 页的 points 每条用「标题：描述」格式（中文冒号分隔，标题 6~12 字概括 + 描述一句话补充），让文字有层次。无描述的要点可直接写短句。
+
+【布局建议】content 页可选 layout 字段，告诉系统这页用什么布局（也可省略让系统自动决定）：
+- image-right：左文右图（有图时的默认）
+- image-left：左图右文
+- image-top：上图下文
+- image-full：全宽背景图 + 文字浮层
+- cards：无图时三栏卡片（适合 3 个要点）
+- columns：无图时两栏（适合 4 个以上要点）
+- center：无图时居中大字（适合 1 个核心观点）
 
 【重要】所有文本字段（title / points / image_prompt）中**禁止使用英文双引号 "**。如需引用或强调，用中文书名号《》或直接叙述，不要用任何引号。这是为了确保 JSON 合法。
 
 只输出 JSON 数组，不要输出任何其他文字。格式：
-[{{"type": "content", "title": "...", "points": ["...", "..."], "image_prompt": "..."}}]
+[{{"type": "content", "title": "...", "points": ["...", "..."], "layout": "image-right", "image_prompt": "..."}}]
 
 主题：{topic}"""
 
@@ -47,9 +57,11 @@ FROM_TEXT_PROMPT = """你是一位专业的 PPT 策划师。用户会给你一�
 
 总页数必须控制在 8~10 页之间。
 
-【提炼要求】不要照搬原文长段落，提炼成每页一个观点的短要点（每条不超过 20 字），只保留文档核心信息。
+【提炼要求】不要照搬原文长段落，提炼成每页一个观点的短要点（每条不超过 20 字），只保留文档核心信息。content 页 points 每条用「标题：描述」格式（中文冒号分隔）。
 
-每页 image_prompt：cover/content 页非空（扁平插画风格画面描述），toc/section/end/data/timeline/compare 页一律为 ""（空字符串）。
+【布局建议】content 页可选 layout 字段：image-right（左文右图）/ image-left（左图右文）/ image-top（上图下文）/ image-full（全宽背景图+文字浮层）/ cards（三栏卡片）/ columns（两栏）/ center（居中大字），也可省略让系统自动决定。
+
+每页 image_prompt：cover 页非空（扁平插画风格画面描述）；content 页按内容决定——具象场景给画面描述（非空走图文布局），并列要点/概念内容留空 ""（走卡片/两栏/居中布局），同一份 PPT 混合图文页与无图页；toc/section/end/data/timeline/compare 页一律 ""（空字符串）。
 
 【重要】所有文本字段（title / points / image_prompt）中**禁止使用英文双引号 "**，用《》或直接叙述，确保 JSON 合法。
 
@@ -59,6 +71,7 @@ FROM_TEXT_PROMPT = """你是一位专业的 PPT 策划师。用户会给你一�
 {text}"""
 
 VALID_TYPES = {"cover", "toc", "section", "content", "data", "timeline", "compare", "end"}
+VALID_LAYOUTS = {"image-right", "image-left", "image-top", "image-full", "cards", "columns", "center"}
 
 
 def _extract_json(text: str) -> list:
@@ -84,10 +97,12 @@ def _normalize(slides: list) -> list[dict]:
         if i == 0 and (stype == "content" or not points):
             stype = "cover"
         prompt = str(s.get("image_prompt", "") or "")
-        # cover/content 必须有配图提示词，缺失时用标题兜底
-        if stype in ("cover", "content") and not prompt:
+        # cover 必须有配图提示词，缺失时用标题兜底；content 页允许无图走无图布局
+        if stype == "cover" and not prompt:
             prompt = f"{title}，扁平插画风格"
         item = {"type": stype, "title": title, "points": points, "image_prompt": prompt}
+        layout = s.get("layout")
+        item["layout"] = layout if layout in VALID_LAYOUTS else None
         item["chart"] = _normalize_chart(s.get("chart"))
         out.append(item)
     return out
@@ -160,6 +175,26 @@ def _client():
     return ZhipuAI(api_key=api_key, base_url=base_url, timeout=60.0), model
 
 
+_CONTENT_LAYOUT_ROTATION = ["image-right", "cards", "image-left", "columns", "image-top", "center", "image-full"]
+_NO_IMAGE_LAYOUTS = {"cards", "columns", "center"}
+
+
+def _diversify_layouts(slides: list) -> list:
+    """content 页 layout 全相同时按轮换序列多样化，保证图文/无图混合。"""
+    content_idx = [i for i, s in enumerate(slides) if s.get("type") == "content"]
+    if len(content_idx) < 2:
+        return slides
+    layouts = {slides[i].get("layout") for i in content_idx}
+    if len(layouts) > 1:
+        return slides  # 已多样，尊重 LLM
+    for k, i in enumerate(content_idx):
+        layout = _CONTENT_LAYOUT_ROTATION[k % len(_CONTENT_LAYOUT_ROTATION)]
+        slides[i]["layout"] = layout
+        if layout in _NO_IMAGE_LAYOUTS:
+            slides[i]["image_prompt"] = ""  # 无图布局清空配图
+    return slides
+
+
 def _generate_with_prompt(prompt_text: str, label: str) -> list[dict]:
     client, model = _client()
     last_err = None
@@ -173,7 +208,7 @@ def _generate_with_prompt(prompt_text: str, label: str) -> list[dict]:
                     slides = _generate_once(client, model, prompt_text, feedback)
                 except Exception:
                     pass  # 改进失败则用首轮结果
-            return slides
+            return _diversify_layouts(slides)
         except Exception as e:
             last_err = e
     raise RuntimeError(f"大纲生成失败（已重试 1 次）: {last_err}")
