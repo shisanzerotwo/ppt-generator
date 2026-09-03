@@ -27,6 +27,8 @@ PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个
 
 视觉规范：每页只讲一个观点；要点 2~3 条、每条不超过 20 字。
 
+【重要】所有文本字段（title / points / image_prompt）中**禁止使用英文双引号 "**。如需引用或强调，用中文书名号《》或直接叙述，不要用任何引号。这是为了确保 JSON 合法。
+
 只输出 JSON 数组，不要输出任何其他文字。格式：
 [{{"type": "content", "title": "...", "points": ["...", "..."], "image_prompt": "..."}}]
 
@@ -71,6 +73,41 @@ def _normalize(slides: list) -> list[dict]:
     return out
 
 
+def _generate_once(client, model, topic, feedback=""):
+    """生成一次大纲，feedback 为空表示首轮，否则带自评意见改进。"""
+    fb = f"\n\n上一版的自评意见（请据此改进）：{feedback}" if feedback else ""
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": PROMPT_TEMPLATE.format(topic=topic) + fb}],
+        temperature=0.3,
+    )
+    slides = _extract_json(resp.choices[0].message.content)
+    if not isinstance(slides, list) or len(slides) < 2:
+        raise ValueError(f"大纲页数异常: {len(slides) if isinstance(slides, list) else '非数组'}")
+    return _normalize(slides)
+
+
+def _self_critique(client, model, topic, slides) -> str:
+    """自评大纲结构是否完整，返回需改进的问题描述；无问题返回空串。"""
+    import json
+    cur = json.dumps([{"type": s["type"], "title": s["title"]} for s in slides], ensure_ascii=False)
+    prompt = (
+        f"主题「{topic}」的 PPT 大纲如下（只列 type 和 title）：\n{cur}\n\n"
+        "判断这份大纲结构是否完整合理。重点看：是否缺封面/目录/总结页、页数是否在 8~12 之间、"
+        "章节划分是否清晰。只输出两行：\n第一行：没问题 或 有问题\n第二行：若有问题，一句话描述需改进什么"
+    )
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=200,
+    )
+    text = (resp.choices[0].message.content or "").strip()
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if lines and "有问题" in lines[0] and len(lines) > 1:
+        return lines[1]
+    return ""
+
+
 def generate_outline(topic: str) -> list[dict]:
     api_key = os.getenv("ZHIPUAI_API_KEY")
     if not api_key or api_key == "your-key-here":
@@ -82,15 +119,15 @@ def generate_outline(topic: str) -> list[dict]:
     last_err = None
     for attempt in range(2):
         try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": PROMPT_TEMPLATE.format(topic=topic)}],
-                temperature=0.7,
-            )
-            slides = _extract_json(resp.choices[0].message.content)
-            if not isinstance(slides, list) or len(slides) < 2:
-                raise ValueError(f"大纲页数异常: {len(slides) if isinstance(slides, list) else '非数组'}")
-            return _normalize(slides)
+            slides = _generate_once(client, model, topic)
+            # 自评迭代：有问题则带意见再生成一轮（封顶 1 次改进）
+            feedback = _self_critique(client, model, topic, slides)
+            if feedback:
+                try:
+                    slides = _generate_once(client, model, topic, feedback)
+                except Exception:
+                    pass  # 改进失败则用首轮结果
+            return slides
         except Exception as e:
             last_err = e
     raise RuntimeError(f"大纲生成失败（已重试 1 次）: {last_err}")

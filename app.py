@@ -8,6 +8,7 @@ import time
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 import builder
+import critic
 import image_gen
 import outline
 
@@ -47,7 +48,8 @@ def _generation_worker(topic: str):
             state["slides"] = [
                 {"type": s.get("type", "content"), "title": s.get("title", ""),
                  "points": s.get("points", []), "image_prompt": s.get("image_prompt", ""),
-                 "chart": s.get("chart"), "image": None, "imageStatus": "pending"}
+                 "chart": s.get("chart"), "image": None, "imageStatus": "pending",
+                 "review": {"ok": True, "reason": "", "tries": 0}}
                 for s in slides
             ]
         _log(f"大纲完成，共 {len(slides)} 页，开始逐页生图")
@@ -61,16 +63,33 @@ def _generation_worker(topic: str):
                 _log(f"页 {i + 1}：无配图提示词，跳过")
                 continue
             path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
-            try:
-                image_gen.generate_image(prompt, path)
-                with lock:
-                    state["slides"][i]["image"] = f"/images/slide_{i}.png"
-                    state["slides"][i]["imageStatus"] = "done"
-                _log(f"页 {i + 1} 图片完成")
-            except Exception as e:
-                with lock:
-                    state["slides"][i]["imageStatus"] = "failed"
-                _log(f"页 {i + 1} 图片生成失败：{e}")
+            review = {"ok": True, "reason": "", "tries": 0}
+            # 提议者-审核者闭环：生图 → vision 校验 → 不契合则改提示词重生（封顶 2 次）
+            for attempt in range(3):
+                try:
+                    image_gen.generate_image(prompt, path)
+                    with lock:
+                        state["slides"][i]["image"] = f"/images/slide_{i}.png"
+                        state["slides"][i]["imageStatus"] = "done"
+                    rv = critic.review_image(s["title"], s.get("points", []), path)
+                    review = {"ok": rv["ok"], "reason": rv["reason"], "tries": attempt}
+                    with lock:
+                        state["slides"][i]["review"] = review
+                    if rv["ok"]:
+                        _log(f"页 {i + 1} 图片完成（校验契合）")
+                        break
+                    if attempt < 2:
+                        if rv["advice"]:
+                            prompt = f"{s.get('image_prompt', prompt)}。注意：{rv['advice']}"
+                        _log(f"页 {i + 1} 校验不契合，重生（第 {attempt + 1} 次）：{rv['reason'][:40]}")
+                    else:
+                        _log(f"页 {i + 1} 已重生 2 次仍未契合，保留当前图")
+                except Exception as e:
+                    with lock:
+                        state["slides"][i]["imageStatus"] = "failed"
+                        state["slides"][i]["review"] = review
+                    _log(f"页 {i + 1} 图片生成失败：{e}")
+                    break
         _log("全部页面就绪，可编辑后导出")
         _phase("ready")
     except Exception as e:
@@ -153,6 +172,76 @@ def api_regen_image(i):
             with lock:
                 state["slides"][i]["imageStatus"] = "failed"
             _log(f"页 {i + 1} 图片生成失败：{e}")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/refine", methods=["POST"])
+def api_refine():
+    data = request.get_json(force=True)
+    instruction = (data.get("instruction") or "").strip()
+    if not instruction:
+        return jsonify({"error": "指令不能为空"}), 400
+    with lock:
+        if state["phase"] not in ("ready",):
+            return jsonify({"error": "请先生成 PPT，再进行对话修改"}), 409
+        cur_slides = [dict(s) for s in state["slides"]]
+        state["phase"] = "refining"
+
+    def worker():
+        try:
+            _log(f"对话修改：{instruction}")
+            new_slides = critic.refine_outline(cur_slides, instruction)
+            with lock:
+                state["slides"] = [
+                    {"type": s.get("type", "content"), "title": s.get("title", ""),
+                     "points": s.get("points", []), "image_prompt": s.get("image_prompt", ""),
+                     "chart": s.get("chart"), "image": None, "imageStatus": "pending",
+                     "review": {"ok": True, "reason": "", "tries": 0}}
+                    for s in new_slides
+                ]
+            _log(f"对话修改完成，共 {len(new_slides)} 页，重新生图")
+            state["phase"] = "images"
+            # 重新走生图 + 视觉校验
+            for i, s in enumerate(new_slides):
+                prompt = s.get("image_prompt", "")
+                if not prompt:
+                    with lock:
+                        state["slides"][i]["imageStatus"] = "skipped"
+                    continue
+                path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
+                review = {"ok": True, "reason": "", "tries": 0}
+                for attempt in range(3):
+                    try:
+                        image_gen.generate_image(prompt, path)
+                        with lock:
+                            state["slides"][i]["image"] = f"/images/slide_{i}.png"
+                            state["slides"][i]["imageStatus"] = "done"
+                        rv = critic.review_image(s["title"], s.get("points", []), path)
+                        review = {"ok": rv["ok"], "reason": rv["reason"], "tries": attempt}
+                        with lock:
+                            state["slides"][i]["review"] = review
+                        if rv["ok"]:
+                            _log(f"页 {i + 1} 图片完成（校验契合）")
+                            break
+                        if attempt < 2:
+                            if rv["advice"]:
+                                prompt = f"{s.get('image_prompt', prompt)}。注意：{rv['advice']}"
+                            _log(f"页 {i + 1} 校验不契合，重生（第 {attempt + 1} 次）")
+                        else:
+                            _log(f"页 {i + 1} 已重生 2 次仍未契合，保留")
+                    except Exception as e:
+                        with lock:
+                            state["slides"][i]["imageStatus"] = "failed"
+                            state["slides"][i]["review"] = review
+                        _log(f"页 {i + 1} 图片生成失败：{e}")
+                        break
+            _log("对话修改完成，可导出")
+            state["phase"] = "ready"
+        except Exception as e:
+            _log(f"对话修改失败：{e}")
+            state["phase"] = "ready"
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"ok": True})

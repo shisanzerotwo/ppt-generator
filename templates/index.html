@@ -117,6 +117,15 @@
   .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#111827;
            color:#f9fafb; padding:12px 22px; border-radius:10px; font-size:14px; display:none;
            z-index:99; max-width:80vw; word-break:break-all; box-shadow:0 8px 30px rgba(0,0,0,.28); }
+  /* 对话修改工具条 + 校验徽章 */
+  .refine-bar { display:flex; gap:10px; margin-bottom:24px; }
+  .refine-bar input { flex:1; padding:10px 14px; font-size:14px; color:var(--fg); background:#fff;
+                      border:1px solid var(--border); border-radius:10px; }
+  .refine-bar input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
+  .review-badge { font-size:11px; padding:2px 10px; border-radius:999px; margin-left:8px; font-weight:700; flex-shrink:0; }
+  .review-badge.ok { background:rgba(22,163,74,.15); color:var(--ok); }
+  .review-badge.regenerated { background:rgba(217,119,6,.15); color:var(--warn); }
+  .review-badge.fail { background:rgba(220,38,38,.15); color:var(--danger); }
 </style>
 </head>
 <body>
@@ -140,6 +149,10 @@
       <span class="step" id="step-ready">编辑导出</span>
     </div>
     <div id="log"></div>
+  </div>
+  <div class="refine-bar">
+    <input id="instruction" placeholder="对话修改，如：把第 3 页改得更简洁 / 整篇换成商务风格" />
+    <button class="btn-outline" id="btn-refine" onclick="doRefine()" disabled>修改</button>
   </div>
   <div id="cards"></div>
 </div>
@@ -212,12 +225,31 @@ async function refresh() {
     document.getElementById('btn-gen').disabled = false;
     document.getElementById('btn-export').disabled = (s.phase !== 'ready' || !s.slides.length);
     document.getElementById('btn-export-html').disabled = (s.phase !== 'ready' || !s.slides.length);
+    document.getElementById('btn-refine').disabled = (s.phase !== 'ready' || !s.slides.length);
     if (s.phase === 'ready' && !s.slides.length) { /* 保留 */ }
     if (s.phase === 'idle' && s.log.length && s.slides.length === 0) {
       const last = s.log[s.log.length - 1];
       if (last.msg.startsWith('生成中断')) toast('生成失败：' + last.msg, 6000);
     }
   }
+}
+
+async function doRefine() {
+  const instruction = document.getElementById('instruction').value.trim();
+  if (!instruction) { toast('请输入修改指令'); return; }
+  const r = await fetch('/api/refine', {method:'POST', headers:{'Content-Type':'application/json'},
+                                         body: JSON.stringify({instruction})});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  document.getElementById('btn-refine').disabled = true;
+  document.getElementById('btn-gen').disabled = true;
+  document.getElementById('btn-export').disabled = true;
+  document.getElementById('btn-export-html').disabled = true;
+  document.getElementById('instruction').value = '';
+  toast('正在按指令修改…');
+  if (polling) clearInterval(polling);
+  polling = setInterval(refresh, 1000);
+  refresh();
 }
 
 function renderSteps(phase) {
@@ -278,11 +310,19 @@ function renderCards(s) {
         <div class="col-img"><div class="img-area">${imgHtml}</div>${imgTools}</div></div>`;
     }
     return `<div class="card themed">
-      <div class="card-head">页 ${i + 1} · <span class="type-badge">${label}</span> ${esc(sl.title)}
+      <div class="card-head">页 ${i + 1} · <span class="type-badge">${label}</span> ${esc(sl.title)}${reviewBadge(sl)}
         <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
       ${body}
     </div>`;
   }).join('');
+}
+
+function reviewBadge(sl) {
+  const rv = sl.review || {};
+  if (rv.tries > 0 && rv.ok) return '<span class="review-badge regenerated">已重生</span>';
+  if (rv.tries >= 2 && !rv.ok) return '<span class="review-badge fail">未契合</span>';
+  if (sl.imageStatus === 'done') return '<span class="review-badge ok">✓ 契合</span>';
+  return '';
 }
 
 async function saveText(i) {
