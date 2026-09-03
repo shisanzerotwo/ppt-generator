@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>PPT 可视化制作</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei", sans-serif; background:#f5f6f8; margin:0; color:#333; }
+  .topbar { background:#fff; padding:14px 28px; display:flex; align-items:center; gap:14px;
+            box-shadow:0 1px 4px rgba(0,0,0,.08); position:sticky; top:0; z-index:10; flex-wrap:wrap; }
+  .topbar h1 { font-size:18px; margin:0 16px 0 0; white-space:nowrap; }
+  .topbar input#topic { flex:1; min-width:240px; padding:9px 14px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+  button { padding:9px 18px; border:none; border-radius:8px; font-size:14px; cursor:pointer; font-family:inherit; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .btn-primary { background:#2b6cb0; color:#fff; }
+  .btn-primary:not(:disabled):hover { background:#245a94; }
+  .btn-outline { background:#fff; color:#2b6cb0; border:1px solid #2b6cb0; }
+  .btn-sm { padding:5px 12px; font-size:13px; }
+  .main { max-width:1100px; margin:0 auto; padding:24px 28px 60px; }
+  .progress { background:#fff; border-radius:10px; padding:16px 22px; margin-bottom:22px;
+              box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .steps { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
+  .step { padding:4px 14px; border-radius:14px; font-size:13px; background:#eee; color:#888; }
+  .step.active { background:#e8f0fb; color:#2b6cb0; font-weight:bold; }
+  .step.done { background:#e6f7ef; color:#1a9a55; }
+  #log { font-size:13px; color:#666; max-height:110px; overflow-y:auto; line-height:1.7; }
+  .card { background:#fff; border-radius:10px; margin-bottom:20px; overflow:hidden;
+          box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  .card-head { padding:10px 20px; font-size:14px; color:#555; border-bottom:1px solid #f0f0f0;
+               display:flex; justify-content:space-between; align-items:center; }
+  .card-body { padding:20px; display:flex; gap:22px; }
+  .card-body.cover { flex-direction:column; align-items:center; padding:36px 20px; }
+  .col-text { flex:1; min-width:0; }
+  .col-img { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
+  .col-text input.title { width:100%; font-size:18px; font-weight:bold; padding:8px 10px;
+                          border:1px solid #e2e2e2; border-radius:6px; margin-bottom:12px; font-family:inherit; }
+  .col-text textarea { width:100%; min-height:170px; font-size:14px; padding:8px 10px; line-height:1.9;
+                       border:1px solid #e2e2e2; border-radius:6px; resize:vertical; font-family:inherit; }
+  .img-area { position:relative; min-height:260px; background:#fafafa; border-radius:8px;
+              display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .img-area img { max-width:100%; max-height:360px; border-radius:6px; box-shadow:0 1px 6px rgba(0,0,0,.12); }
+  .img-area .placeholder { color:#999; font-size:14px; }
+  .spinner { width:36px; height:36px; border:4px solid #e0e0e0; border-top-color:#2b6cb0;
+             border-radius:50%; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .img-tools { display:flex; gap:8px; }
+  .img-tools input { flex:1; padding:6px 10px; border:1px solid #e2e2e2; border-radius:6px; font-size:13px; font-family:inherit; }
+  .save-hint { font-size:12px; color:#1a9a55; margin-left:10px; }
+  .cover input.title { text-align:center; font-size:26px; max-width:560px; }
+  .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#333; color:#fff;
+           padding:12px 24px; border-radius:8px; font-size:14px; display:none; z-index:99; max-width:80vw; word-break:break-all; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>PPT 可视化制作</h1>
+  <input id="topic" placeholder="输入主题，如：青少年为什么要学编程" />
+  <button class="btn-primary" id="btn-gen" onclick="doGenerate()">生成</button>
+  <button class="btn-outline" id="btn-export" onclick="doExport()" disabled>导出 pptx</button>
+</div>
+<div class="main">
+  <div class="progress">
+    <div class="steps">
+      <span class="step" id="step-outline">① 大纲生成</span>
+      <span class="step" id="step-images">② 逐页生图</span>
+      <span class="step" id="step-ready">③ 编辑导出</span>
+    </div>
+    <div id="log"></div>
+  </div>
+  <div id="cards"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let polling = null;
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function toast(msg, ms = 3000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', ms);
+}
+
+async function doGenerate() {
+  const topic = document.getElementById('topic').value.trim();
+  if (!topic) { toast('请先输入主题'); return; }
+  const r = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'},
+                                           body: JSON.stringify({topic})});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  document.getElementById('btn-gen').disabled = true;
+  document.getElementById('btn-export').disabled = true;
+  if (polling) clearInterval(polling);
+  polling = setInterval(refresh, 1000);
+  refresh();
+}
+
+async function refresh() {
+  const r = await fetch('/api/status');
+  const s = await r.json();
+  renderSteps(s.phase);
+  renderLog(s.log);
+  renderCards(s);
+  if (s.phase === 'idle' || s.phase === 'ready') {
+    if (polling) { clearInterval(polling); polling = null; }
+    document.getElementById('btn-gen').disabled = false;
+    document.getElementById('btn-export').disabled = (s.phase !== 'ready' || !s.slides.length);
+    if (s.phase === 'ready' && !s.slides.length) { /* 保留 */ }
+    if (s.phase === 'idle' && s.log.length && s.slides.length === 0) {
+      const last = s.log[s.log.length - 1];
+      if (last.msg.startsWith('生成中断')) toast('生成失败：' + last.msg, 6000);
+    }
+  }
+}
+
+function renderSteps(phase) {
+  const m = {'outline': ['active','',''], 'images': ['done','active',''], 'ready': ['done','done','done']};
+  const v = m[phase] || ['','',''];
+  ['step-outline','step-images','step-ready'].forEach((id, i) => {
+    document.getElementById(id).className = 'step ' + v[i];
+  });
+}
+
+function renderLog(log) {
+  const el = document.getElementById('log');
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  el.innerHTML = log.map(l => `<div>[${l.time}] ${esc(l.msg)}</div>`).join('');
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+function renderCards(s) {
+  const wrap = document.getElementById('cards');
+  const sig = s.phase + '|' + s.slides.map(x => x.title + x.imageStatus + (x.image || '') + x.points.join('§')).join('¶');
+  if (wrap.dataset.sig === sig) return;
+  wrap.dataset.sig = sig;
+
+  // 正在输入编辑时不重建 DOM（焦点保护）
+  if (document.activeElement && wrap.contains(document.activeElement) &&
+      document.activeElement.tagName !== 'BUTTON') return;
+
+  wrap.innerHTML = s.slides.map((sl, i) => {
+    const isCover = i === 0 && !sl.points.length;
+    let imgHtml;
+    if (sl.imageStatus === 'generating') imgHtml = '<div class="spinner"></div>';
+    else if (sl.image) imgHtml = `<img src="${sl.image}" alt="页${i+1}">`;
+    else imgHtml = `<div class="placeholder">${sl.imageStatus === 'failed' ? '（图片生成失败）' : '（无图）'}</div>`;
+
+    const imgTools = isCover ? '' : `
+      <div class="img-tools">
+        <input id="prompt-${i}" placeholder="自定义图片描述（可留空）" value="${esc(sl.image_prompt)}">
+        <button class="btn-outline btn-sm" onclick="regenImage(${i})" ${sl.imageStatus==='generating'?'disabled':''}>换一张图</button>
+      </div>`;
+
+    if (isCover) {
+      return `<div class="card">
+        <div class="card-head">页 1 · 封面 <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
+        <div class="card-body cover">
+          <input class="title" id="title-${i}" value="${esc(sl.title)}">
+          ${imgHtml}
+          ${imgTools}
+        </div>
+      </div>`;
+    }
+    return `<div class="card">
+      <div class="card-head">页 ${i + 1} · ${esc(sl.title)} <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
+      <div class="card-body">
+        <div class="col-text">
+          <input class="title" id="title-${i}" value="${esc(sl.title)}">
+          <textarea id="points-${i}" placeholder="每行一个要点">${esc(sl.points.join('\n'))}</textarea>
+        </div>
+        <div class="col-img">
+          <div class="img-area">${imgHtml}</div>
+          ${imgTools}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function saveText(i) {
+  const title = document.getElementById('title-' + i).value;
+  const ptsEl = document.getElementById('points-' + i);
+  const points = ptsEl ? ptsEl.value.split('\n').map(x => x.trim()).filter(Boolean) : [];
+  const r = await fetch(`/api/slide/${i}/text`, {method:'POST', headers:{'Content-Type':'application/json'},
+                                                  body: JSON.stringify({title, points})});
+  if (r.ok) toast(`页 ${i + 1} 文字已保存`);
+  else toast((await r.json()).error);
+}
+
+async function regenImage(i) {
+  const prompt = document.getElementById('prompt-' + i).value;
+  const r = await fetch(`/api/slide/${i}/image`, {method:'POST', headers:{'Content-Type':'application/json'},
+                                                   body: JSON.stringify({prompt})});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast(`页 ${i + 1} 正在重新生图…`);
+  if (polling) clearInterval(polling);
+  polling = setInterval(refresh, 1000);
+}
+
+async function doExport() {
+  const r = await fetch('/api/export', {method:'POST'});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('已导出：' + d.path, 8000);
+}
+</script>
+</body>
+</html>
