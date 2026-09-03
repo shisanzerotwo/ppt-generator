@@ -15,7 +15,9 @@ PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个
 1. 第 1 页 type="cover"（封面，title 为主题，points 空列表）；第 2 页 type="toc"（目录，title="目录"，points 为各章节标题列表）
 2. 按章节组织：每章开头一个 type="section" 页（title 为章标题，points 为该章一句话简介），其后是该章 2 个 type="content" 页
 3. 最后 1 页 type="end"（总结/行动项，title 一句总结）
-4. 出现可量化的对比/分布信息时，用 type="data" 页替代一个 content 页，并给 chart: {{"labels": ["项1","项2",...], "values": [数字, ...]}}
+4. 出现可量化的对比/分布信息时，用 type="data" 页替代一个 content 页，并给 chart: {{"type": "bar|column|pie|line", "labels": ["项1","项2",...], "values": [数字, ...]}}。chart.type 按数据性质选：占比/份额用 pie、时间趋势用 line、类别对比用 column、类别横向对比用 bar；拿不准可省略 type 让系统自动选
+5. 有明确的时间/阶段演进（如发展历程、历史节点）时，可用 type="timeline" 页（points 为按时间顺序的节点，每条含时间+事件，如"2015年：成立"）
+6. 需要左右对照（如优劣、方案对比、前后对比）时，可用 type="compare" 页（points 前一半放左栏、后一半放右栏）
 
 总页数必须控制在 8~10 页之间，绝对不要超过 10 页，不要过度分章。
 
@@ -23,7 +25,7 @@ PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个
 - cover 页：描述体现主题的封面插图
 - content 页：描述该页内容的具体场景，扁平插画风格
 - section 页：可给章节主题相关画面，也可留空字符串 ""
-- toc / end / data 页：image_prompt 一律为 ""（空字符串）
+- toc / end / data / timeline / compare 页：image_prompt 一律为 ""（空字符串）
 
 视觉规范：每页只讲一个观点；要点 2~3 条、每条不超过 20 字。
 
@@ -34,7 +36,7 @@ PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个
 
 主题：{topic}"""
 
-VALID_TYPES = {"cover", "toc", "section", "content", "data", "end"}
+VALID_TYPES = {"cover", "toc", "section", "content", "data", "timeline", "compare", "end"}
 
 
 def _extract_json(text: str) -> list:

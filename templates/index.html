@@ -112,6 +112,15 @@
   .bar-label { width:8rem; text-align:right; color:var(--deck-muted); flex-shrink:0; }
   .bar-track { flex:1; background:rgba(255,255,255,.12); border-radius:6px; height:22px; overflow:hidden; }
   .bar { display:block; height:100%; background:var(--deck-accent); border-radius:6px; }
+  /* 时间线 & 对比预览 */
+  .timeline-css { display:flex; position:relative; padding-top:22px; width:100%; max-width:760px; margin:0 auto; }
+  .timeline-css::before { content:""; position:absolute; top:10px; left:4%; right:4%; height:3px; background:var(--deck-accent); }
+  .tl-node { flex:1; text-align:center; position:relative; padding:0 4px; }
+  .tl-dot { width:12px; height:12px; border-radius:50%; background:var(--deck-accent); margin:0 auto 8px; border:2px solid var(--deck-bg); }
+  .tl-node span { font-size:12px; color:var(--deck-fg); display:block; line-height:1.5; }
+  .compare-css { display:flex; gap:16px; width:100%; max-width:760px; margin:0 auto; }
+  .cmp-col { flex:1; border-top:3px solid var(--deck-accent); padding-top:12px; text-align:left; }
+  .cmp-col div { font-size:13px; color:var(--deck-muted); padding:4px 0; }
 
   /* ===== toast ===== */
   .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#111827;
@@ -167,7 +176,7 @@ const THEMES_JS = {
   green: {bg:'#062e21', accent:'#22c55e', fg:'#ecfdf5', muted:'#a7c4b6'},
 };
 
-const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文', data:'图表', end:'总结'};
+const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文', data:'图表', timeline:'时间线', compare:'对比', end:'总结'};
 
 function applyTheme(name) {
   const t = THEMES_JS[name] || THEMES_JS.blue;
@@ -185,6 +194,17 @@ function chartHtml(chart) {
     `<div class="bar-row"><span class="bar-label">${esc(l)}</span>
      <span class="bar-track"><span class="bar" style="width:${values[i]/mx*100}%"></span></span>
      <span class="bar-val">${values[i]}</span></div>`).join('') + '</div>';
+}
+
+function timelineHtml(points) {
+  return '<div class="timeline-css">' + points.map(p =>
+    `<div class="tl-node"><div class="tl-dot"></div><span>${esc(p)}</span></div>`).join('') + '</div>';
+}
+
+function compareHtml(points) {
+  const mid = Math.ceil(points.length / 2);
+  const col = items => '<div class="cmp-col">' + items.map(p => `<div>▸ ${esc(p)}</div>`).join('') + '</div>';
+  return '<div class="compare-css">' + col(points.slice(0, mid)) + col(points.slice(mid)) + '</div>';
 }
 
 function esc(s) {
@@ -301,6 +321,10 @@ function renderCards(s) {
         <div class="lead">${esc(sl.points[0] || '')}</div></div>`;
     } else if (stype === 'data') {
       body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">${chartHtml(sl.chart)}</div>`;
+    } else if (stype === 'timeline') {
+      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">${timelineHtml(sl.points)}</div>`;
+    } else if (stype === 'compare') {
+      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">${compareHtml(sl.points)}</div>`;
     } else if (stype === 'end') {
       body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}"></div>`;
     } else {
