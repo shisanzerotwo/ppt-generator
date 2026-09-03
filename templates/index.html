@@ -2,81 +2,123 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>PPT 可视化制作</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PPT 制作台</title>
 <style>
-  * { box-sizing: border-box; }
-  body { font-family: "Microsoft YaHei", sans-serif; background:#f5f6f8; margin:0; color:#333; }
-  .topbar { background:#fff; padding:14px 28px; display:flex; align-items:center; gap:14px;
-            box-shadow:0 1px 4px rgba(0,0,0,.08); position:sticky; top:0; z-index:10; flex-wrap:wrap; }
-  .topbar h1 { font-size:18px; margin:0 16px 0 0; white-space:nowrap; }
-  .topbar input#topic { flex:1; min-width:220px; padding:9px 14px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
-  .topbar select { padding:9px 10px; border:1px solid #ddd; border-radius:8px; font-size:14px; font-family:inherit; background:#fff; }
-  button { padding:9px 18px; border:none; border-radius:8px; font-size:14px; cursor:pointer; font-family:inherit; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
-  .btn-primary { background:#2b6cb0; color:#fff; }
-  .btn-primary:not(:disabled):hover { background:#245a94; }
-  .btn-outline { background:#fff; color:#2b6cb0; border:1px solid #2b6cb0; }
-  .btn-sm { padding:5px 12px; font-size:13px; }
-  .main { max-width:1100px; margin:0 auto; padding:24px 28px 60px; }
-  .progress { background:#fff; border-radius:10px; padding:16px 22px; margin-bottom:22px;
-              box-shadow:0 1px 4px rgba(0,0,0,.08); }
+  :root {
+    --bg:#0d0f14; --panel:#14161d; --card:#1a1d26; --border:#262a35;
+    --fg:#e8eaf0; --muted:#8b93a3; --accent:#34d3c4; --ok:#22c55e;
+    --warn:#f59e0b; --danger:#ef4444;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font-family:"Noto Sans SC","Segoe UI","Microsoft YaHei",sans-serif; }
+  ::selection { background:rgba(52,211,196,.28); }
+  button, input, select, textarea { font-family:inherit; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline:2px solid var(--accent); outline-offset:1px; }
+
+  /* ===== 顶栏 ===== */
+  .topbar { background:var(--panel); padding:14px 24px; display:flex; align-items:center;
+            gap:12px; border-bottom:1px solid var(--border); position:sticky; top:0;
+            z-index:10; flex-wrap:wrap; }
+  .topbar h1 { font-size:18px; font-weight:600; letter-spacing:.02em; margin:0 14px 0 0; white-space:nowrap;
+               color:var(--fg); display:flex; align-items:center; gap:8px; }
+  .topbar h1 .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+  .topbar input#topic { flex:1; min-width:200px; padding:10px 14px; font-size:15px; color:var(--fg);
+                        background:var(--card); border:1px solid var(--border); border-radius:8px; }
+  .topbar input#topic::placeholder { color:var(--muted); }
+  .topbar input#topic:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(52,211,196,.15); }
+  .topbar select { padding:9px 10px; color:var(--fg); background:var(--card);
+                   border:1px solid var(--border); border-radius:8px; font-size:14px; }
+
+  /* ===== 按钮 ===== */
+  button { padding:9px 16px; border:none; border-radius:8px; font-size:14px; cursor:pointer;
+           transition:background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .btn-primary { background:var(--accent); color:#062821; font-weight:600; }
+  .btn-primary:not(:disabled):hover { background:#4fe0d2; }
+  .btn-outline { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  .btn-outline:not(:disabled):hover { background:rgba(52,211,196,.12); }
+  .btn-sm { padding:5px 12px; font-size:13px; border-radius:6px; }
+
+  /* ===== 主区 ===== */
+  .main { max-width:1120px; margin:0 auto; padding:24px 24px 60px; }
+
+  /* ===== 进度区 ===== */
+  .progress { background:var(--panel); border:1px solid var(--border); border-radius:12px;
+              padding:16px 20px; margin-bottom:24px; }
   .steps { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
-  .step { padding:4px 14px; border-radius:14px; font-size:13px; background:#eee; color:#888; }
-  .step.active { background:#e8f0fb; color:#2b6cb0; font-weight:bold; }
-  .step.done { background:#e6f7ef; color:#1a9a55; }
-  #log { font-size:13px; color:#666; max-height:110px; overflow-y:auto; line-height:1.7; }
-  .card { background:#fff; border-radius:10px; margin-bottom:20px; overflow:hidden;
-          box-shadow:0 1px 4px rgba(0,0,0,.08); }
-  /* 主题化预览（变量由 JS 按所选主题设置，色板来自 ppt-maker skill） */
-  #cards { --deck-bg:#fff; --deck-fg:#333; --deck-muted:#666; --deck-accent:#2b6cb0; }
-  .card.themed { background:var(--deck-bg); color:var(--deck-fg); }
-  .card.themed .card-head { color:var(--deck-muted); border-bottom:1px solid rgba(255,255,255,.14); }
-  .card.themed .col-text input.title, .card.themed .col-text textarea,
-  .card.themed .img-tools input { background:rgba(255,255,255,.08); color:var(--deck-fg);
-                                   border:1px solid rgba(255,255,255,.18); }
-  .card.themed .img-area { background:rgba(255,255,255,.06); }
-  .card.themed .card-head { border-left:5px solid var(--deck-accent); }
-  .card-head { padding:10px 20px; font-size:14px; color:#555; border-bottom:1px solid #f0f0f0;
-               display:flex; justify-content:space-between; align-items:center; }
+  .step { padding:5px 14px; border-radius:999px; font-size:13px; color:var(--muted);
+          background:var(--card); border:1px solid var(--border); }
+  .step.active { color:var(--accent); border-color:var(--accent); font-weight:600;
+                 box-shadow:0 0 0 3px rgba(52,211,196,.14); }
+  .step.done { color:var(--ok); border-color:rgba(34,197,94,.4); }
+  .step.done::before { content:"✓"; margin-right:5px; color:var(--ok); }
+  #log { font-size:13px; color:var(--muted); max-height:120px; overflow-y:auto; line-height:1.7;
+         font-variant-numeric:tabular-nums; }
+  #log div { padding:1px 0; }
+
+  /* ===== 页面卡片 ===== */
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
+          margin-bottom:20px; overflow:hidden; transition:border-color .15s ease; }
+  .card:hover { border-color:#333a49; }
+  .card-head { padding:10px 18px; font-size:14px; color:var(--fg); border-bottom:1px solid var(--border);
+               display:flex; justify-content:space-between; align-items:center; gap:10px; }
   .card-body { padding:20px; display:flex; gap:22px; }
   .card-body.cover { flex-direction:column; align-items:center; padding:36px 20px; }
+
+  /* 预览卡片内部（按 PPT 主题色显示，与深色壳分层） */
+  #cards { --deck-bg:#1a1d26; --deck-fg:#e8eaf0; --deck-muted:#8b93a3; --deck-accent:#34d3c4; }
+  .card.themed { background:var(--deck-bg); color:var(--deck-fg); box-shadow:0 6px 24px rgba(0,0,0,.25); }
+  .card.themed .card-head { color:var(--deck-fg); border-bottom:1px solid rgba(255,255,255,.12); }
+  .card.themed:hover { border-color:var(--deck-accent); }
+  .card.themed .card-body { border-left:5px solid var(--deck-accent); }
+  .card.themed input.title, .card.themed textarea, .card.themed .img-tools input {
+    background:rgba(255,255,255,.07); color:var(--deck-fg); border:1px solid rgba(255,255,255,.16); }
+  .card.themed input.title:focus, .card.themed textarea:focus { border-color:var(--deck-accent); }
+  .card.themed .img-area { background:rgba(255,255,255,.05); }
+
+  /* ===== 编辑控件 ===== */
   .col-text { flex:1; min-width:0; }
   .col-img { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
-  .col-text input.title { width:100%; font-size:18px; font-weight:bold; padding:8px 10px;
-                          border:1px solid #e2e2e2; border-radius:6px; margin-bottom:12px; font-family:inherit; }
+  .col-text input.title { width:100%; font-size:17px; font-weight:600; padding:8px 10px;
+                          border-radius:6px; margin-bottom:12px; }
   .col-text textarea { width:100%; min-height:170px; font-size:14px; padding:8px 10px; line-height:1.9;
-                       border:1px solid #e2e2e2; border-radius:6px; resize:vertical; font-family:inherit; }
-  .img-area { position:relative; min-height:260px; background:#fafafa; border-radius:8px;
+                       border-radius:6px; resize:vertical; }
+  .img-area { position:relative; min-height:260px; border-radius:8px;
               display:flex; align-items:center; justify-content:center; overflow:hidden; }
-  .img-area img { max-width:100%; max-height:360px; border-radius:6px; box-shadow:0 1px 6px rgba(0,0,0,.12); }
-  .img-area .placeholder { color:#999; font-size:14px; }
-  .spinner { width:36px; height:36px; border:4px solid #e0e0e0; border-top-color:#2b6cb0;
+  .img-area img { max-width:100%; max-height:360px; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,.4); }
+  .img-area .placeholder { color:var(--muted); font-size:14px; }
+  .spinner { width:34px; height:34px; border:3px solid rgba(255,255,255,.15); border-top-color:var(--accent);
              border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .img-tools { display:flex; gap:8px; }
-  .img-tools input { flex:1; padding:6px 10px; border:1px solid #e2e2e2; border-radius:6px; font-size:13px; font-family:inherit; }
-  .save-hint { font-size:12px; color:#1a9a55; margin-left:10px; }
-  .cover input.title { text-align:center; font-size:26px; max-width:560px; }
-  .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#333; color:#fff;
-           padding:12px 24px; border-radius:8px; font-size:14px; display:none; z-index:99; max-width:80vw; word-break:break-all; }
-  /* 多版式预览 */
-  .type-badge { font-size:11px; padding:2px 8px; border-radius:8px; background:var(--deck-accent); color:var(--deck-bg); margin-left:8px; font-weight:bold; }
-  .card-body.center { flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:48px 20px; text-align:center; }
+  .img-tools input { flex:1; padding:6px 10px; font-size:13px; border-radius:6px; }
+
+  /* ===== 版式徽章 & 居中版式 ===== */
+  .type-badge { font-size:11px; padding:2px 10px; border-radius:999px; background:var(--deck-accent);
+                color:#062821; margin-left:4px; font-weight:700; flex-shrink:0; }
+  .card-body.center { flex-direction:column; align-items:center; justify-content:center; gap:16px;
+                      padding:48px 20px; text-align:center; }
   .card-body.center input.title { text-align:center; font-size:26px; max-width:620px; }
   .card-body.center .lead { color:var(--deck-muted); font-size:14px; max-width:520px; }
-  .toc-list { list-style:none; width:100%; max-width:640px; margin:0 auto; }
-  .toc-list li { padding:12px 8px; font-size:18px; border-bottom:1px solid var(--deck-accent); color:var(--deck-fg); }
   .chart-css { width:100%; max-width:560px; margin:0 auto; }
   .bar-row { display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:14px; }
   .bar-label { width:8rem; text-align:right; color:var(--deck-muted); flex-shrink:0; }
   .bar-track { flex:1; background:rgba(255,255,255,.12); border-radius:6px; height:22px; overflow:hidden; }
   .bar { display:block; height:100%; background:var(--deck-accent); border-radius:6px; }
-  .bar-val { width:2.5rem; font-weight:700; }
+
+  /* ===== toast ===== */
+  .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#0a0c10;
+           color:var(--fg); border:1px solid var(--border); padding:12px 22px; border-radius:10px;
+           font-size:14px; display:none; z-index:99; max-width:80vw; word-break:break-all;
+           box-shadow:0 8px 30px rgba(0,0,0,.5); }
 </style>
 </head>
 <body>
 <div class="topbar">
-  <h1>PPT 可视化制作</h1>
+  <h1><span class="dot"></span>PPT 制作台</h1>
   <input id="topic" placeholder="输入主题，如：青少年为什么要学编程" />
   <select id="theme">
     <option value="blue">海洋蓝</option>
@@ -90,9 +132,9 @@
 <div class="main">
   <div class="progress">
     <div class="steps">
-      <span class="step" id="step-outline">① 大纲生成</span>
-      <span class="step" id="step-images">② 逐页生图</span>
-      <span class="step" id="step-ready">③ 编辑导出</span>
+      <span class="step" id="step-outline">大纲生成</span>
+      <span class="step" id="step-images">逐页生图</span>
+      <span class="step" id="step-ready">编辑导出</span>
     </div>
     <div id="log"></div>
   </div>
@@ -109,6 +151,8 @@ const THEMES_JS = {
   green: {bg:'#062e21', accent:'#22c55e', fg:'#ecfdf5', muted:'#a7c4b6'},
 };
 
+const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文', data:'图表', end:'总结'};
+
 function applyTheme(name) {
   const t = THEMES_JS[name] || THEMES_JS.blue;
   const el = document.getElementById('cards');
@@ -117,8 +161,6 @@ function applyTheme(name) {
   el.style.setProperty('--deck-muted', t.muted);
   el.style.setProperty('--deck-accent', t.accent);
 }
-
-const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文', data:'图表', end:'总结'};
 
 function chartHtml(chart) {
   const labels = chart?.labels || [], values = chart?.values || [];
@@ -196,7 +238,6 @@ function renderCards(s) {
   if (wrap.dataset.sig === sig) return;
   wrap.dataset.sig = sig;
 
-  // 正在输入编辑时不重建 DOM 丢焦点
   if (document.activeElement && wrap.contains(document.activeElement) &&
       !['BUTTON','INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
 
