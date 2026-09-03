@@ -45,9 +45,9 @@ def _generation_worker(topic: str):
         slides = outline.generate_outline(topic)
         with lock:
             state["slides"] = [
-                {"title": s.get("title", ""), "points": s.get("points", []),
-                 "image_prompt": s.get("image_prompt", ""), "image": None,
-                 "imageStatus": "pending"}
+                {"type": s.get("type", "content"), "title": s.get("title", ""),
+                 "points": s.get("points", []), "image_prompt": s.get("image_prompt", ""),
+                 "chart": s.get("chart"), "image": None, "imageStatus": "pending"}
                 for s in slides
             ]
         _log(f"大纲完成，共 {len(slides)} 页，开始逐页生图")
@@ -79,6 +79,13 @@ def _generation_worker(topic: str):
 
 
 app = Flask(__name__)
+
+
+@app.after_request
+def no_cache(resp):
+    # 开发期禁用缓存，保证前端每次刷新都拿到最新页面
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
 
 
 @app.route("/")
@@ -167,7 +174,8 @@ def api_export():
     safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
     out_path = os.path.join(OUTPUT_DIR, f"{safe_topic}_{time.strftime('%Y%m%d_%H%M%S')}.pptx")
     builder.build_ppt(
-        [{"title": s["title"], "points": s["points"], "image_prompt": s["image_prompt"]} for s in slides],
+        [{"type": s.get("type", "content"), "title": s["title"], "points": s["points"],
+          "image_prompt": s["image_prompt"], "chart": s.get("chart")} for s in slides],
         [os.path.join(IMAGES_DIR, os.path.basename(s["image"])) if s["image"] else None for s in slides],
         out_path,
         theme=theme,
@@ -189,24 +197,44 @@ def _html_escape(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
+def _deck_bars(chart) -> str:
+    labels = chart.get("labels", [])
+    values = chart.get("values", [])
+    mx = max(values) if values else 1
+    return '<div class="chart">' + "".join(
+        f'<div class="bar-row"><span class="bar-label">{_html_escape(labels[i])}</span>'
+        f'<span class="bar-track"><span class="bar" style="width:{values[i] / mx * 100:.0f}%"></span></span>'
+        f'<span class="bar-val">{values[i]}</span></div>'
+        for i in range(min(len(labels), len(values)))) + "</div>"
+
+
 def _build_html_deck(topic: str, slides: list[dict], theme: str, out_path: str) -> str:
-    """把当前页面状态导出为零依赖单文件 HTML 幻灯片（含图片，相对路径）。"""
+    """把当前页面状态导出为零依赖单文件 HTML 幻灯片（含图片，按版式区分）。"""
     t = _HTML_THEMES.get(theme, _HTML_THEMES["blue"])
     sections = []
     for i, s in enumerate(slides):
         title = _html_escape(s["title"])
-        if i == 0 and not s["points"]:
-            sections.append(
-                f'<section class="slide cover"><h1 class="title">{title}</h1>'
-                f'<p class="sub">{_html_escape(topic)}</p></section>')
-            continue
-        lis = "".join(f"<li>{_html_escape(p)}</li>" for p in s["points"])
-        img = ""
-        if s["image"]:
-            img = f'<img class="deck-img" src="{s["image"].lstrip("/")}" alt="">'
-        sections.append(
-            f'<section class="slide"><h2 class="h">{title}</h2>'
-            f'<div class="row"><ul>{lis}</ul>{img}</div></section>')
+        stype = s.get("type", "content")
+        points = s.get("points", [])
+        if stype == "cover" or (i == 0 and not points):
+            body = (f'<section class="slide cover"><h1 class="title">{title}</h1>'
+                    f'<p class="sub">{_html_escape(topic)}</p></section>')
+        elif stype == "toc":
+            rows = "".join(f'<li class="toc-item">{_html_escape(p)}</li>' for p in points)
+            body = f'<section class="slide"><h2 class="h">{title}</h2><ul class="toc">{rows}</ul></section>'
+        elif stype == "section":
+            brief = f'<p class="lead">{_html_escape(points[0])}</p>' if points else ""
+            body = f'<section class="slide section"><h1 class="sect-title">{title}</h1>{brief}</section>'
+        elif stype == "data" and s.get("chart"):
+            body = f'<section class="slide"><h2 class="h">{title}</h2>{_deck_bars(s["chart"])}</section>'
+        elif stype == "end":
+            body = f'<section class="slide end"><h1 class="center">{title}</h1></section>'
+        else:
+            lis = "".join(f"<li>{_html_escape(p)}</li>" for p in points)
+            img = f'<img class="deck-img" src="{s["image"].lstrip("/")}" alt="">' if s.get("image") else ""
+            row = f'<div class="row"><ul>{lis}</ul>{img}</div>' if img else f'<ul>{lis}</ul>'
+            body = f'<section class="slide"><h2 class="h">{title}</h2>{row}</section>'
+        sections.append(body)
 
     doc = f"""<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -220,9 +248,20 @@ body{{font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;backgroun
 .slide.cover .sub{{font-size:clamp(1.1rem,2.4vw,1.6rem);color:{t['muted']};margin-top:1.2rem}}
 .h{{font-size:clamp(1.6rem,3.6vw,2.6rem);font-weight:800;margin-bottom:2rem;border-left:6px solid {t['accent']};padding-left:1rem}}
 .row{{display:flex;gap:3rem;align-items:center}}
-ul{{list-style:none;flex:1}}
+ul{{list-style:none}}
 li{{font-size:clamp(1rem,2vw,1.35rem);line-height:1.7;padding:.55rem 0 .55rem 2rem;position:relative}}
 li::before{{content:"▸";position:absolute;left:0;color:{t['accent']}}}
+li.toc-item{{font-size:clamp(1.1rem,2.4vw,1.6rem);padding:.8rem 0 .8rem 2rem;border-bottom:1px solid rgba(255,255,255,.1)}}
+.sect-title{{font-size:clamp(2rem,5vw,3.4rem);font-weight:800;text-align:center;border-bottom:4px solid {t['accent']};padding-bottom:1.4rem}}
+.section .lead{{font-size:1.2rem;color:{t['muted']};text-align:center;margin-top:1.6rem}}
+.chart{{display:flex;flex-direction:column;gap:1.1rem;margin-top:1rem}}
+.bar-row{{display:flex;align-items:center;gap:.8rem;font-size:1.1rem}}
+.bar-label{{width:8rem;text-align:right;color:{t['muted']};flex-shrink:0}}
+.bar-track{{flex:1;background:rgba(255,255,255,.12);border-radius:8px;height:1.6rem;overflow:hidden}}
+.bar{{display:block;height:100%;background:linear-gradient(90deg,{t['accent']},{t['accent']}cc);border-radius:8px}}
+.bar-val{{width:3rem;font-weight:700}}
+.center{{text-align:center;font-weight:800;font-size:clamp(1.8rem,4vw,3rem)}}
+.slide.end .center{{color:{t['accent']}}}
 .deck-img{{flex:1;max-width:40vw;max-height:70vh;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,.35)}}
 @media print{{.slide{{min-height:100vh;page-break-after:always}}}}
 </style></head><body>{''.join(sections)}</body></html>"""

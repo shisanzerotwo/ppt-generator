@@ -59,6 +59,19 @@
   .cover input.title { text-align:center; font-size:26px; max-width:560px; }
   .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#333; color:#fff;
            padding:12px 24px; border-radius:8px; font-size:14px; display:none; z-index:99; max-width:80vw; word-break:break-all; }
+  /* 多版式预览 */
+  .type-badge { font-size:11px; padding:2px 8px; border-radius:8px; background:var(--deck-accent); color:var(--deck-bg); margin-left:8px; font-weight:bold; }
+  .card-body.center { flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:48px 20px; text-align:center; }
+  .card-body.center input.title { text-align:center; font-size:26px; max-width:620px; }
+  .card-body.center .lead { color:var(--deck-muted); font-size:14px; max-width:520px; }
+  .toc-list { list-style:none; width:100%; max-width:640px; margin:0 auto; }
+  .toc-list li { padding:12px 8px; font-size:18px; border-bottom:1px solid var(--deck-accent); color:var(--deck-fg); }
+  .chart-css { width:100%; max-width:560px; margin:0 auto; }
+  .bar-row { display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:14px; }
+  .bar-label { width:8rem; text-align:right; color:var(--deck-muted); flex-shrink:0; }
+  .bar-track { flex:1; background:rgba(255,255,255,.12); border-radius:6px; height:22px; overflow:hidden; }
+  .bar { display:block; height:100%; background:var(--deck-accent); border-radius:6px; }
+  .bar-val { width:2.5rem; font-weight:700; }
 </style>
 </head>
 <body>
@@ -103,6 +116,17 @@ function applyTheme(name) {
   el.style.setProperty('--deck-fg', t.fg);
   el.style.setProperty('--deck-muted', t.muted);
   el.style.setProperty('--deck-accent', t.accent);
+}
+
+const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文', data:'图表', end:'总结'};
+
+function chartHtml(chart) {
+  const labels = chart?.labels || [], values = chart?.values || [];
+  const mx = Math.max(...values, 1);
+  return '<div class="chart-css">' + labels.map((l, i) =>
+    `<div class="bar-row"><span class="bar-label">${esc(l)}</span>
+     <span class="bar-track"><span class="bar" style="width:${values[i]/mx*100}%"></span></span>
+     <span class="bar-val">${values[i]}</span></div>`).join('') + '</div>';
 }
 
 function esc(s) {
@@ -168,49 +192,51 @@ function renderLog(log) {
 
 function renderCards(s) {
   const wrap = document.getElementById('cards');
-  const sig = s.phase + '|' + s.slides.map(x => x.title + x.imageStatus + (x.image || '') + x.points.join('§')).join('¶');
+  const sig = s.phase + '|' + s.slides.map(x => x.type + x.title + x.imageStatus + (x.image||'') + x.points.join('§') + JSON.stringify(x.chart||'')).join('¶');
   if (wrap.dataset.sig === sig) return;
   wrap.dataset.sig = sig;
 
-  // 正在输入编辑时不重建 DOM（焦点保护）
+  // 正在输入编辑时不重建 DOM 丢焦点
   if (document.activeElement && wrap.contains(document.activeElement) &&
-      document.activeElement.tagName !== 'BUTTON') return;
+      !['BUTTON','INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
 
   wrap.innerHTML = s.slides.map((sl, i) => {
-    const isCover = i === 0 && !sl.points.length;
+    const stype = sl.type || 'content';
+    const label = TYPE_LABEL[stype] || '图文';
     let imgHtml;
     if (sl.imageStatus === 'generating') imgHtml = '<div class="spinner"></div>';
     else if (sl.image) imgHtml = `<img src="${sl.image}" alt="页${i+1}">`;
     else imgHtml = `<div class="placeholder">${sl.imageStatus === 'failed' ? '（图片生成失败）' : '（无图）'}</div>`;
 
-    const imgTools = isCover ? '' : `
+    const imgTools = stype === 'content' ? `
       <div class="img-tools">
         <input id="prompt-${i}" placeholder="自定义图片描述（可留空）" value="${esc(sl.image_prompt)}">
         <button class="btn-outline btn-sm" onclick="regenImage(${i})" ${sl.imageStatus==='generating'?'disabled':''}>换一张图</button>
-      </div>`;
+      </div>` : '';
 
-    if (isCover) {
-      return `<div class="card themed">
-        <div class="card-head">页 1 · 封面 <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
-        <div class="card-body cover">
-          <input class="title" id="title-${i}" value="${esc(sl.title)}">
-          ${imgHtml}
-          ${imgTools}
-        </div>
-      </div>`;
+    let body;
+    if (stype === 'cover') {
+      body = `<div class="card-body cover"><input class="title" id="title-${i}" value="${esc(sl.title)}">${imgHtml}</div>`;
+    } else if (stype === 'toc') {
+      body = `<div class="card-body"><input class="title" id="title-${i}" value="${esc(sl.title)}">
+        <textarea id="points-${i}" placeholder="每行一个章节标题">${esc(sl.points.join('\n'))}</textarea></div>`;
+    } else if (stype === 'section') {
+      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">
+        <div class="lead">${esc(sl.points[0] || '')}</div></div>`;
+    } else if (stype === 'data') {
+      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">${chartHtml(sl.chart)}</div>`;
+    } else if (stype === 'end') {
+      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}"></div>`;
+    } else {
+      body = `<div class="card-body"><div class="col-text">
+        <input class="title" id="title-${i}" value="${esc(sl.title)}">
+        <textarea id="points-${i}" placeholder="每行一个要点">${esc(sl.points.join('\n'))}</textarea></div>
+        <div class="col-img"><div class="img-area">${imgHtml}</div>${imgTools}</div></div>`;
     }
     return `<div class="card themed">
-      <div class="card-head">页 ${i + 1} · ${esc(sl.title)} <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
-      <div class="card-body">
-        <div class="col-text">
-          <input class="title" id="title-${i}" value="${esc(sl.title)}">
-          <textarea id="points-${i}" placeholder="每行一个要点">${esc(sl.points.join('\n'))}</textarea>
-        </div>
-        <div class="col-img">
-          <div class="img-area">${imgHtml}</div>
-          ${imgTools}
-        </div>
-      </div>
+      <div class="card-head">页 ${i + 1} · <span class="type-badge">${label}</span> ${esc(sl.title)}
+        <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
+      ${body}
     </div>`;
   }).join('');
 }
