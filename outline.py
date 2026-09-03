@@ -75,13 +75,15 @@ def generate_outline(topic: str) -> list[dict]:
     api_key = os.getenv("ZHIPUAI_API_KEY")
     if not api_key or api_key == "your-key-here":
         raise RuntimeError("未配置 ZHIPUAI_API_KEY，请复制 .env.example 为 .env 并填入 Key")
+    base_url = os.getenv("ZHIPUAI_BASE_URL") or None
+    model = os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash"
 
-    client = ZhipuAI(api_key=api_key)
+    client = ZhipuAI(api_key=api_key, base_url=base_url)
     last_err = None
     for attempt in range(2):
         try:
             resp = client.chat.completions.create(
-                model="glm-4-flash",
+                model=model,
                 messages=[{"role": "user", "content": PROMPT_TEMPLATE.format(topic=topic)}],
                 temperature=0.7,
             )
