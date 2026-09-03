@@ -36,14 +36,43 @@ def _phase(p: str):
         state["phase"] = p
 
 
-def _generation_worker(topic: str):
-    state["topic"] = topic
-    state["slides"] = []
-    state["log"] = []
-    _phase("outline")
+def _parse_upload(file) -> str:
+    """解析上传文件（docx/md/txt），返回纯文本。"""
+    filename = (file.filename or "").lower()
+    if filename.endswith(".docx"):
+        import docx
+        from io import BytesIO
+        d = docx.Document(BytesIO(file.read()))
+        return "\n".join(p.text for p in d.paragraphs if p.text.strip())
+    return file.read().decode("utf-8", errors="ignore")
+
+
+def _start_generation(content: str, from_text: bool, theme: str) -> bool:
+    """锁内初始化 state 并启动后台 worker，避免 phase 置位竞态。"""
+    with lock:
+        if state["phase"] not in ("idle", "ready"):
+            return False
+        state["topic"] = content
+        state["theme"] = theme
+        state["slides"] = []
+        state["log"] = []
+        state["phase"] = "outline"
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    threading.Thread(target=_generation_worker, args=(content, from_text), daemon=True).start()
+    return True
+
+
+def _generation_worker(content: str, from_text: bool = False):
     try:
-        _log(f"生成大纲：{topic}")
-        slides = outline.generate_outline(topic)
+        if from_text:
+            _log("从文档提炼大纲…")
+            slides = outline.generate_outline_from_text(content)
+            if slides:
+                with lock:
+                    state["topic"] = slides[0].get("title", "") or content[:20]
+        else:
+            _log(f"生成大纲：{content}")
+            slides = outline.generate_outline(content)
         with lock:
             state["slides"] = [
                 {"type": s.get("type", "content"), "title": s.get("title", ""),
@@ -116,15 +145,40 @@ def index():
 def api_generate():
     data = request.get_json(force=True)
     topic = (data.get("topic") or "").strip()
-    if not topic:
+    if not isinstance(topic, str) or not topic:
         return jsonify({"error": "主题不能为空"}), 400
     theme = data.get("theme") if data.get("theme") in builder.THEMES else "blue"
-    with lock:
-        if state["phase"] not in ("idle", "ready"):
-            return jsonify({"error": "正在生成中，请等待完成"}), 409
-        state["theme"] = theme
-    os.makedirs(IMAGES_DIR, exist_ok=True)
-    threading.Thread(target=_generation_worker, args=(topic,), daemon=True).start()
+    if not _start_generation(topic, False, theme):
+        return jsonify({"error": "正在生成中，请等待完成"}), 409
+    return jsonify({"ok": True})
+
+
+@app.route("/api/import", methods=["POST"])
+def api_import():
+    data = request.get_json(force=True)
+    text = (data.get("text") or "").strip()
+    if not isinstance(text, str) or len(text) < 30:
+        return jsonify({"error": "文档内容过短，请提供更完整的文档"}), 400
+    theme = data.get("theme") if data.get("theme") in builder.THEMES else "blue"
+    if not _start_generation(text, True, theme):
+        return jsonify({"error": "正在生成中，请等待完成"}), 409
+    return jsonify({"ok": True})
+
+
+@app.route("/api/import_file", methods=["POST"])
+def api_import_file():
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "未收到文件"}), 400
+    try:
+        text = _parse_upload(f)
+    except Exception as e:
+        return jsonify({"error": f"文件解析失败：{e}"}), 400
+    if len(text.strip()) < 30:
+        return jsonify({"error": "文档内容过短"}), 400
+    theme = request.form.get("theme") if request.form.get("theme") in builder.THEMES else "blue"
+    if not _start_generation(text.strip(), True, theme):
+        return jsonify({"error": "正在生成中，请等待完成"}), 409
     return jsonify({"ok": True})
 
 
@@ -272,6 +326,73 @@ def api_export():
     )
     _log(f"已导出：{os.path.basename(out_path)}")
     return jsonify({"ok": True, "path": out_path})
+
+
+@app.route("/api/export_txt", methods=["POST"])
+def api_export_txt():
+    with lock:
+        phase = state["phase"]
+        slides = [dict(s) for s in state["slides"]]
+        topic = state["topic"]
+    if phase != "ready" or not slides:
+        return jsonify({"error": "生成尚未完成，无法导出"}), 409
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
+    out_path = os.path.join(OUTPUT_DIR, f"{safe_topic}_{time.strftime('%Y%m%d_%H%M%S')}_大纲.txt")
+    lines = [topic, "=" * 40]
+    for i, s in enumerate(slides):
+        lines.append(f"\n[{i + 1}] {s['title']}")
+        for p in s.get("points", []):
+            lines.append(f"  - {p}")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    _log(f"已导出大纲：{os.path.basename(out_path)}")
+    return jsonify({"ok": True, "path": out_path})
+
+
+def _export_pdf_via_com(pptx_path: str, pdf_path: str) -> bool:
+    """用 PowerPoint COM 把 pptx 转 PDF，成功返回 True。"""
+    try:
+        import win32com.client  # noqa
+    except ImportError:
+        return False
+    import pythoncom
+    try:
+        pythoncom.CoInitialize()
+        app = win32com.client.Dispatch("PowerPoint.Application")
+        pres = app.Presentations.Open(pptx_path, WithWindow=False)
+        pres.SaveAs(pdf_path, 32)  # 32 = ppSaveAsPDF
+        pres.Close()
+        app.Quit()
+        return os.path.exists(pdf_path)
+    except Exception:
+        return False
+
+
+@app.route("/api/export_pdf", methods=["POST"])
+def api_export_pdf():
+    with lock:
+        phase = state["phase"]
+        slides = [dict(s) for s in state["slides"]]
+        topic = state["topic"]
+        theme = state["theme"]
+    if phase != "ready" or not slides:
+        return jsonify({"error": "生成尚未完成，无法导出"}), 409
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    pptx_path = os.path.join(OUTPUT_DIR, f"{safe_topic}_{stamp}.pptx")
+    pdf_path = os.path.join(OUTPUT_DIR, f"{safe_topic}_{stamp}.pdf")
+    builder.build_ppt(
+        [{"type": s.get("type", "content"), "title": s["title"], "points": s["points"],
+          "image_prompt": s["image_prompt"], "chart": s.get("chart")} for s in slides],
+        [os.path.join(IMAGES_DIR, os.path.basename(s["image"])) if s["image"] else None for s in slides],
+        pptx_path, theme=theme, subtitle=topic,
+    )
+    if _export_pdf_via_com(pptx_path, pdf_path):
+        _log(f"已导出 PDF：{os.path.basename(pdf_path)}")
+        return jsonify({"ok": True, "path": pdf_path})
+    return jsonify({"ok": False, "error": "PDF 导出失败（需安装 pywin32 与 PowerPoint），可改用「导出 HTML」后用浏览器打印为 PDF"}), 500
 
 
 # HTML 演示版色板/结构来自 ppt-maker skill（~/.agents/skills/ppt-maker）

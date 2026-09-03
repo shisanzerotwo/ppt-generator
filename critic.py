@@ -18,7 +18,7 @@ def _client() -> ZhipuAI:
     api_key = os.getenv("ZHIPUAI_API_KEY")
     if not api_key or api_key == "your-key-here":
         raise RuntimeError("未配置 ZHIPUAI_API_KEY")
-    return ZhipuAI(api_key=api_key, base_url=os.getenv("ZHIPUAI_BASE_URL") or None)
+    return ZhipuAI(api_key=api_key, base_url=os.getenv("ZHIPUAI_BASE_URL") or None, timeout=60.0)
 
 
 def review_image(title: str, points: list[str], image_path: str) -> dict:

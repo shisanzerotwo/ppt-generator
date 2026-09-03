@@ -34,7 +34,7 @@ def generate_image(prompt: str, save_path: str) -> str:
     if not api_key or api_key == "your-key-here":
         raise RuntimeError("未配置 ZHIPUAI_API_KEY")
     base_url = os.getenv("ZHIPUAI_BASE_URL") or None
-    client = ZhipuAI(api_key=api_key, base_url=base_url)
+    client = ZhipuAI(api_key=api_key, base_url=base_url, timeout=60.0)
 
     last_err = None
     # Agnes 生图为异步：偶发返回任务引用 URL（非图片），重试拿最终图

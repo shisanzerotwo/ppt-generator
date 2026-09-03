@@ -147,8 +147,12 @@
     <option value="green">墨绿</option>
   </select>
   <button class="btn-primary" id="btn-gen" onclick="doGenerate()">生成</button>
+  <button class="btn-outline" id="btn-import" onclick="document.getElementById('file-input').click()">导入文档</button>
+  <input type="file" id="file-input" accept=".md,.txt,.docx" style="display:none" onchange="doImport(this)" />
   <button class="btn-outline" id="btn-export" onclick="doExport()" disabled>导出 pptx</button>
   <button class="btn-outline" id="btn-export-html" onclick="doExportHtml()" disabled>导出 HTML</button>
+  <button class="btn-outline" id="btn-export-txt" onclick="doExportTxt()" disabled>导出大纲</button>
+  <button class="btn-outline" id="btn-export-pdf" onclick="doExportPdf()" disabled>导出 PDF</button>
 </div>
 <div class="main">
   <div class="progress">
@@ -188,7 +192,7 @@ function applyTheme(name) {
 }
 
 function chartHtml(chart) {
-  const labels = chart?.labels || [], values = chart?.values || [];
+  const labels = chart?.labels || [], values = (chart?.values || []).map(v => Number(v) || 0);
   const mx = Math.max(...values, 1);
   return '<div class="chart-css">' + labels.map((l, i) =>
     `<div class="bar-row"><span class="bar-label">${esc(l)}</span>
@@ -226,11 +230,16 @@ async function doGenerate() {
   const d = await r.json();
   if (!r.ok) { toast(d.error); return; }
   document.getElementById('btn-gen').disabled = true;
-  document.getElementById('btn-export').disabled = true;
-  document.getElementById('btn-export-html').disabled = true;
+  setExportButtons(true);
   if (polling) clearInterval(polling);
   polling = setInterval(refresh, 1000);
   refresh();
+}
+
+function setExportButtons(disabled) {
+  ['btn-export', 'btn-export-html', 'btn-export-txt', 'btn-export-pdf'].forEach(id => {
+    document.getElementById(id).disabled = disabled;
+  });
 }
 
 async function refresh() {
@@ -243,9 +252,9 @@ async function refresh() {
   if (s.phase === 'idle' || s.phase === 'ready') {
     if (polling) { clearInterval(polling); polling = null; }
     document.getElementById('btn-gen').disabled = false;
-    document.getElementById('btn-export').disabled = (s.phase !== 'ready' || !s.slides.length);
-    document.getElementById('btn-export-html').disabled = (s.phase !== 'ready' || !s.slides.length);
-    document.getElementById('btn-refine').disabled = (s.phase !== 'ready' || !s.slides.length);
+    const canExport = s.phase === 'ready' && s.slides.length > 0;
+    setExportButtons(!canExport);
+    document.getElementById('btn-refine').disabled = !canExport;
     if (s.phase === 'ready' && !s.slides.length) { /* 保留 */ }
     if (s.phase === 'idle' && s.log.length && s.slides.length === 0) {
       const last = s.log[s.log.length - 1];
@@ -263,8 +272,7 @@ async function doRefine() {
   if (!r.ok) { toast(d.error); return; }
   document.getElementById('btn-refine').disabled = true;
   document.getElementById('btn-gen').disabled = true;
-  document.getElementById('btn-export').disabled = true;
-  document.getElementById('btn-export-html').disabled = true;
+  setExportButtons(true);
   document.getElementById('instruction').value = '';
   toast('正在按指令修改…');
   if (polling) clearInterval(polling);
@@ -273,7 +281,8 @@ async function doRefine() {
 }
 
 function renderSteps(phase) {
-  const m = {'outline': ['active','',''], 'images': ['done','active',''], 'ready': ['done','done','done']};
+  const m = {'outline': ['active','',''], 'images': ['done','active',''],
+             'refining': ['done','done','active'], 'ready': ['done','done','done']};
   const v = m[phase] || ['','',''];
   ['step-outline','step-images','step-ready'].forEach((id, i) => {
     document.getElementById(id).className = 'step ' + v[i];
@@ -383,6 +392,39 @@ async function doExportHtml() {
   if (!r.ok) { toast(d.error); return; }
   toast('已导出 HTML：' + d.path, 8000);
   window.open(d.path.replace(/\\/g, '/'), '_blank');
+}
+
+async function doImport(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('theme', document.getElementById('theme').value);
+  toast('正在解析文档…');
+  const r = await fetch('/api/import_file', {method:'POST', body: fd});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || '导入失败'); return; }
+  input.value = '';
+  toast('正在从文档生成 PPT…');
+  document.getElementById('btn-gen').disabled = true;
+  setExportButtons(true);
+  if (polling) clearInterval(polling);
+  polling = setInterval(refresh, 1000);
+  refresh();
+}
+
+async function doExportTxt() {
+  const r = await fetch('/api/export_txt', {method:'POST'});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('已导出大纲：' + d.path, 8000);
+}
+
+async function doExportPdf() {
+  const r = await fetch('/api/export_pdf', {method:'POST'});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error || 'PDF 导出失败', 5000); return; }
+  toast('已导出 PDF：' + d.path, 8000);
 }
 </script>
 </body>
