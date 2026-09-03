@@ -6,54 +6,55 @@
 <title>PPT 制作台</title>
 <style>
   :root {
-    --bg:#0d0f14; --panel:#14161d; --card:#1a1d26; --border:#262a35;
-    --fg:#e8eaf0; --muted:#8b93a3; --accent:#34d3c4; --ok:#22c55e;
-    --warn:#f59e0b; --danger:#ef4444;
+    --bg:#fafafa; --panel:#ffffff; --card:#ffffff; --border:#e5e7eb;
+    --fg:#111827; --muted:#6b7280; --accent:#4f46e5; --ok:#16a34a;
+    --warn:#d97706; --danger:#dc2626;
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
-         font-family:"Noto Sans SC","Segoe UI","Microsoft YaHei",sans-serif; }
-  ::selection { background:rgba(52,211,196,.28); }
+         font-family:"Inter","Segoe UI","Microsoft YaHei","Noto Sans SC",sans-serif;
+         -webkit-font-smoothing:antialiased; }
+  ::selection { background:rgba(79,70,229,.15); }
   button, input, select, textarea { font-family:inherit; }
   button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
     outline:2px solid var(--accent); outline-offset:1px; }
 
   /* ===== 顶栏 ===== */
-  .topbar { background:var(--panel); padding:14px 24px; display:flex; align-items:center;
+  .topbar { background:var(--panel); padding:14px 28px; display:flex; align-items:center;
             gap:12px; border-bottom:1px solid var(--border); position:sticky; top:0;
             z-index:10; flex-wrap:wrap; }
-  .topbar h1 { font-size:18px; font-weight:600; letter-spacing:.02em; margin:0 14px 0 0; white-space:nowrap;
+  .topbar h1 { font-size:18px; font-weight:700; letter-spacing:-.01em; margin:0 16px 0 0; white-space:nowrap;
                color:var(--fg); display:flex; align-items:center; gap:8px; }
-  .topbar h1 .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); }
+  .topbar h1 .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); }
   .topbar input#topic { flex:1; min-width:200px; padding:10px 14px; font-size:15px; color:var(--fg);
-                        background:var(--card); border:1px solid var(--border); border-radius:8px; }
+                        background:#fff; border:1px solid var(--border); border-radius:10px;
+                        transition:border-color .15s ease, box-shadow .15s ease; }
   .topbar input#topic::placeholder { color:var(--muted); }
-  .topbar input#topic:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(52,211,196,.15); }
-  .topbar select { padding:9px 10px; color:var(--fg); background:var(--card);
-                   border:1px solid var(--border); border-radius:8px; font-size:14px; }
+  .topbar input#topic:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
+  .topbar select { padding:9px 11px; color:var(--fg); background:#fff;
+                   border:1px solid var(--border); border-radius:10px; font-size:14px; }
 
   /* ===== 按钮 ===== */
-  button { padding:9px 16px; border:none; border-radius:8px; font-size:14px; cursor:pointer;
+  button { padding:9px 16px; border:none; border-radius:10px; font-size:14px; cursor:pointer;
            transition:background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease; }
   button:disabled { opacity:.4; cursor:not-allowed; }
-  .btn-primary { background:var(--accent); color:#062821; font-weight:600; }
-  .btn-primary:not(:disabled):hover { background:#4fe0d2; }
+  .btn-primary { background:var(--accent); color:#fff; font-weight:600; }
+  .btn-primary:not(:disabled):hover { background:#4338ca; }
   .btn-outline { background:transparent; color:var(--accent); border:1px solid var(--accent); }
-  .btn-outline:not(:disabled):hover { background:rgba(52,211,196,.12); }
-  .btn-sm { padding:5px 12px; font-size:13px; border-radius:6px; }
+  .btn-outline:not(:disabled):hover { background:rgba(79,70,229,.07); }
+  .btn-sm { padding:5px 12px; font-size:13px; border-radius:8px; }
 
   /* ===== 主区 ===== */
-  .main { max-width:1120px; margin:0 auto; padding:24px 24px 60px; }
+  .main { max-width:1120px; margin:0 auto; padding:28px 28px 64px; }
 
   /* ===== 进度区 ===== */
   .progress { background:var(--panel); border:1px solid var(--border); border-radius:12px;
-              padding:16px 20px; margin-bottom:24px; }
+              padding:16px 20px; margin-bottom:28px; }
   .steps { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
   .step { padding:5px 14px; border-radius:999px; font-size:13px; color:var(--muted);
-          background:var(--card); border:1px solid var(--border); }
-  .step.active { color:var(--accent); border-color:var(--accent); font-weight:600;
-                 box-shadow:0 0 0 3px rgba(52,211,196,.14); }
-  .step.done { color:var(--ok); border-color:rgba(34,197,94,.4); }
+          background:var(--bg); border:1px solid transparent; }
+  .step.active { color:var(--accent); background:rgba(79,70,229,.08); font-weight:600; }
+  .step.done { color:var(--ok); background:rgba(22,163,74,.08); }
   .step.done::before { content:"✓"; margin-right:5px; color:var(--ok); }
   #log { font-size:13px; color:var(--muted); max-height:120px; overflow-y:auto; line-height:1.7;
          font-variant-numeric:tabular-nums; }
@@ -62,43 +63,46 @@
   /* ===== 页面卡片 ===== */
   .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
           margin-bottom:20px; overflow:hidden; transition:border-color .15s ease; }
-  .card:hover { border-color:#333a49; }
+  .card:hover { border-color:#d1d5db; }
   .card-head { padding:10px 18px; font-size:14px; color:var(--fg); border-bottom:1px solid var(--border);
                display:flex; justify-content:space-between; align-items:center; gap:10px; }
   .card-body { padding:20px; display:flex; gap:22px; }
   .card-body.cover { flex-direction:column; align-items:center; padding:36px 20px; }
 
-  /* 预览卡片内部（按 PPT 主题色显示，与深色壳分层） */
-  #cards { --deck-bg:#1a1d26; --deck-fg:#e8eaf0; --deck-muted:#8b93a3; --deck-accent:#34d3c4; }
-  .card.themed { background:var(--deck-bg); color:var(--deck-fg); box-shadow:0 6px 24px rgba(0,0,0,.25); }
-  .card.themed .card-head { color:var(--deck-fg); border-bottom:1px solid rgba(255,255,255,.12); }
+  /* 预览卡片内部（按 PPT 主题色，深色"画布"贴纸感，与浅色壳对比） */
+  #cards { --deck-bg:#1a1d26; --deck-fg:#e8eaf0; --deck-muted:#8b93a3; --deck-accent:#4f46e5; }
+  .card.themed { background:var(--deck-bg); color:var(--deck-fg); box-shadow:0 8px 28px rgba(17,24,39,.12); }
+  .card.themed .card-head { color:var(--deck-fg); border-bottom:1px solid rgba(255,255,255,.12); background:rgba(0,0,0,.12); }
   .card.themed:hover { border-color:var(--deck-accent); }
   .card.themed .card-body { border-left:5px solid var(--deck-accent); }
   .card.themed input.title, .card.themed textarea, .card.themed .img-tools input {
     background:rgba(255,255,255,.07); color:var(--deck-fg); border:1px solid rgba(255,255,255,.16); }
-  .card.themed input.title:focus, .card.themed textarea:focus { border-color:var(--deck-accent); }
+  .card.themed input.title:focus, .card.themed textarea:focus, .card.themed .img-tools input:focus { border-color:var(--deck-accent); }
   .card.themed .img-area { background:rgba(255,255,255,.05); }
+  .card.themed .btn-outline { color:var(--deck-accent); border-color:var(--deck-accent); }
+  .card.themed .btn-outline:hover { background:rgba(255,255,255,.1); }
+  .card.themed .type-badge { background:var(--deck-accent); color:#fff; }
 
   /* ===== 编辑控件 ===== */
   .col-text { flex:1; min-width:0; }
   .col-img { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
   .col-text input.title { width:100%; font-size:17px; font-weight:600; padding:8px 10px;
-                          border-radius:6px; margin-bottom:12px; }
+                          border-radius:8px; margin-bottom:12px; }
   .col-text textarea { width:100%; min-height:170px; font-size:14px; padding:8px 10px; line-height:1.9;
-                       border-radius:6px; resize:vertical; }
+                       border-radius:8px; resize:vertical; }
   .img-area { position:relative; min-height:260px; border-radius:8px;
               display:flex; align-items:center; justify-content:center; overflow:hidden; }
-  .img-area img { max-width:100%; max-height:360px; border-radius:6px; box-shadow:0 4px 18px rgba(0,0,0,.4); }
-  .img-area .placeholder { color:var(--muted); font-size:14px; }
-  .spinner { width:34px; height:34px; border:3px solid rgba(255,255,255,.15); border-top-color:var(--accent);
+  .img-area img { max-width:100%; max-height:360px; border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,.35); }
+  .img-area .placeholder { color:var(--deck-muted); font-size:14px; }
+  .spinner { width:34px; height:34px; border:3px solid rgba(255,255,255,.15); border-top-color:var(--deck-accent);
              border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   .img-tools { display:flex; gap:8px; }
-  .img-tools input { flex:1; padding:6px 10px; font-size:13px; border-radius:6px; }
+  .img-tools input { flex:1; padding:6px 10px; font-size:13px; border-radius:8px; }
 
   /* ===== 版式徽章 & 居中版式 ===== */
   .type-badge { font-size:11px; padding:2px 10px; border-radius:999px; background:var(--deck-accent);
-                color:#062821; margin-left:4px; font-weight:700; flex-shrink:0; }
+                color:#fff; margin-left:4px; font-weight:700; flex-shrink:0; }
   .card-body.center { flex-direction:column; align-items:center; justify-content:center; gap:16px;
                       padding:48px 20px; text-align:center; }
   .card-body.center input.title { text-align:center; font-size:26px; max-width:620px; }
@@ -110,10 +114,9 @@
   .bar { display:block; height:100%; background:var(--deck-accent); border-radius:6px; }
 
   /* ===== toast ===== */
-  .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#0a0c10;
-           color:var(--fg); border:1px solid var(--border); padding:12px 22px; border-radius:10px;
-           font-size:14px; display:none; z-index:99; max-width:80vw; word-break:break-all;
-           box-shadow:0 8px 30px rgba(0,0,0,.5); }
+  .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#111827;
+           color:#f9fafb; padding:12px 22px; border-radius:10px; font-size:14px; display:none;
+           z-index:99; max-width:80vw; word-break:break-all; box-shadow:0 8px 30px rgba(0,0,0,.28); }
 </style>
 </head>
 <body>
