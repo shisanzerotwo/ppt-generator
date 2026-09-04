@@ -85,8 +85,10 @@ def _design_and_save():
         os.makedirs(DECKS_DIR, exist_ok=True)
         safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
         out_path = os.path.join(DECKS_DIR, f"{safe_topic}_{time.strftime('%Y%m%d_%H%M%S')}.html")
-        with open(out_path, "w", encoding="utf-8") as f:
+        tmp_path = out_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(doc)
+        os.replace(tmp_path, out_path)  # 原子落盘，避免 /api/decks 列出半截文件（审计 P2-2）
         with lock:
             # basename 做 URL 编码：主题含引号/反引号等字符时不会被前端 onclick 拼接执行（审计 C1）
             state["html_path"] = f"/decks/{quote(os.path.basename(out_path))}"
@@ -589,6 +591,10 @@ def api_decks():
         if not name.lower().endswith(".html"):
             continue
         full = os.path.join(DECKS_DIR, name)
+        try:
+            mtime = os.path.getmtime(full)
+        except OSError:
+            continue  # 列目录与取 mtime 之间文件被删（审计 P2-1）
         stem = name[:-5]
         # 文件名格式：<主题>_<YYYYmmdd>_<HHMMSS>.html，拆出主题与时间
         parts = stem.rsplit("_", 2)
@@ -596,7 +602,7 @@ def api_decks():
         items.append({
             "title": title,
             "url": f"/decks/{quote(name)}",
-            "mtime": os.path.getmtime(full),
+            "mtime": mtime,
         })
     items.sort(key=lambda x: x["mtime"], reverse=True)
     for it in items:

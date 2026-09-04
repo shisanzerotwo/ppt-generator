@@ -463,6 +463,8 @@ async function refresh() {
   const r = await fetch('/api/status');
   const s = await r.json();
   const working = !['idle', 'ready'].includes(s.phase);
+  // 生成中途刷新页面（F5）后自动恢复轮询（审计 M1）
+  if (working && !polling) polling = setInterval(refresh, 1000);
 
   $('progress').hidden = (s.phase === 'idle' && !s.log.length);
   $('hero').hidden = working || s.slides.length > 0;

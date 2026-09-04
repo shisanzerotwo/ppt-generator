@@ -63,16 +63,20 @@ PRINT_CSS = """
 
 
 def _ensure_print_css(html: str) -> str:
-    """LLM 漏写打印分页规则时补上，保证浏览器能正确打印成 PDF（每页一张）。"""
-    if "@media print" in html:
+    """LLM 漏写打印分页规则时补上，保证浏览器能正确打印成 PDF（每页一张）。
+
+    检测与定位均大小写不敏感（审计 P2-3）；@media print 存在但缺 @page 时仍注入
+    （审计 P2-4：有 print 块没 @page 同样分不了页）。
+    """
+    lower = html.lower()
+    if "@media print" in lower and "@page" in lower:
         return html
-    idx = html.rfind("</head>")
-    if idx != -1:
-        return html[:idx] + PRINT_CSS + "\n" + html[idx:]
-    idx = html.rfind("</body>")
-    if idx != -1:
-        return html[:idx] + PRINT_CSS + "\n" + html[idx:]
-    return html
+    idx = lower.rfind("</head>")
+    if idx == -1:
+        idx = lower.rfind("</body>")
+    if idx == -1:
+        return html
+    return html[:idx] + PRINT_CSS + "\n" + html[idx:]
 
 
 def _call_llm(prompt: str) -> str:

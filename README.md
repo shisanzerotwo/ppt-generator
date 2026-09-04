@@ -9,7 +9,9 @@ AI 驱动的 PPT 生成器：输入主题，自动完成「大纲 → 生图 →
 - **完整的生成流水线**：大纲（章节化、8~10 页）→ 逐页生图 → 视觉校验（提议者-审核者闭环，不契合自动改词重生）→ LLM 设计 HTML
 - **对话式修改**：ready 后可输入指令（如“第 3 页更简洁 / 整篇换商务风”）重新生成，自动重设计 HTML
 - **多格式导出**：主产物 HTML（AI 设计稿，可预览/打印 PDF），另有 pptx（可编辑版）、PDF、大纲 txt 降级方案
-- **开发友好**：Web 界面实时显示阶段、日志、风格徽章；54 条 pytest 单测
+- **打印分页兑底**：LLM 漏写 `@media print` 时，`html_gen` 自动注入分页规则（1280×720 每页一张、`page-break-after`），保证浏览器打印/导出 PDF 排版正确
+- **历史设计稿**：侧栏「历史设计稿」列出最近 30 份已生成的设计稿（按时间倒序，含标题与时间），点击即可在新标签打开
+- **开发友好**：Web 界面实时显示阶段、日志、风格徽章；65 条 pytest 单测
 
 ## 🚀 快速开始
 
@@ -63,7 +65,7 @@ ZHIPUAI_BASE_URL=https://apihub.agnes-ai.com/v1
 └─────────────┘
       │
       ▼
-   ready（Web 顶部 iframe 预览 / 新标签打开 / 重新设计）
+   ready（Web 顶部 iframe 预览 / 新标签打开 / 重新设计 / 侧栏历史设计稿）
 ```
 
 ## 📂 核心模块
@@ -88,13 +90,14 @@ ZHIPUAI_BASE_URL=https://apihub.agnes-ai.com/v1
 | `POST /api/refine` | 对话式修改并重设计 |
 | `POST /api/redesign` | 重新触发 AI 设计（重生成 HTML） |
 | `GET /api/status` | 轮询状态（phase / slides / html_path / style_name / log） |
+| `GET /api/decks` | 历史设计稿列表（按修改时间倒序，上限 30，含标题/链接/时间） |
 | `POST /api/export` `/export_pdf` `/export_html` `/export_txt` | 多格式导出 |
 | `GET /decks/<file>` | 访问 AI 设计稿 HTML |
 
 ## 🧪 测试
 
 ```bash
-pytest -q          # 54 条单测
+pytest -q          # 65 条单测
 ```
 
 测试通过 mock 截获 LLM 调用，覆盖：大纲解析、风格判定与回退、HTML 提取/重试、路径编码（防 XSS）、builder 版式等。
