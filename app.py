@@ -9,18 +9,21 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 import builder
 import critic
+import html_gen
 import image_gen
 import outline
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 IMAGES_DIR = os.path.join(OUTPUT_DIR, "images")
+DECKS_DIR = os.path.join(OUTPUT_DIR, "decks")
 
 state = {
     "topic": "",
-    "phase": "idle",  # idle / outline / images / ready
+    "phase": "idle",  # idle / outline / images / designing / ready
     "theme": "blue",  # blue / dark / green（色板来自 ppt-maker skill）
     "slides": [],     # {title, points, image_prompt, image, imageStatus}
+    "html_path": None,  # AI 自主设计的 HTML 主产物（web 路径 /decks/xxx.html）
     "log": [],
 }
 lock = threading.Lock()
@@ -55,11 +58,36 @@ def _start_generation(content: str, from_text: bool, theme: str) -> bool:
         state["topic"] = content
         state["theme"] = theme
         state["slides"] = []
+        state["html_path"] = None
         state["log"] = []
         state["phase"] = "outline"
     os.makedirs(IMAGES_DIR, exist_ok=True)
     threading.Thread(target=_generation_worker, args=(content, from_text), daemon=True).start()
     return True
+
+
+def _design_and_save():
+    """designing 阶段：调 LLM 自主设计 HTML 并保存，失败仅记日志不阻断。"""
+    with lock:
+        slides = [dict(s) for s in state["slides"]]
+        topic = state["topic"]
+    _phase("designing")
+    _log("AI 正在自主设计 HTML 幻灯片…")
+    image_map = {i: f"../images/slide_{i}.png" for i, s in enumerate(slides) if s.get("image")}
+    try:
+        doc = html_gen.generate_html_deck(topic, slides, image_map)
+        os.makedirs(DECKS_DIR, exist_ok=True)
+        safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
+        out_path = os.path.join(DECKS_DIR, f"{safe_topic}_{time.strftime('%Y%m%d_%H%M%S')}.html")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(doc)
+        with lock:
+            state["html_path"] = f"/decks/{os.path.basename(out_path)}"
+        _log(f"HTML 设计完成：{os.path.basename(out_path)}")
+        return True
+    except Exception as e:
+        _log(f"HTML 设计失败：{e}")
+        return False
 
 
 def _generation_worker(content: str, from_text: bool = False):
@@ -120,6 +148,7 @@ def _generation_worker(content: str, from_text: bool = False):
                         state["slides"][i]["review"] = review
                     _log(f"页 {i + 1} 图片生成失败：{e}")
                     break
+        _design_and_save()
         _log("全部页面就绪，可编辑后导出")
         _phase("ready")
     except Exception as e:
@@ -293,6 +322,7 @@ def api_refine():
                             state["slides"][i]["review"] = review
                         _log(f"页 {i + 1} 图片生成失败：{e}")
                         break
+            _design_and_save()
             _log("对话修改完成，可导出")
             state["phase"] = "ready"
         except Exception as e:
@@ -503,9 +533,34 @@ def api_export_html():
     return jsonify({"ok": True, "path": out_path})
 
 
+@app.route("/api/redesign", methods=["POST"])
+def api_redesign():
+    """编辑页面后重新触发 AI 设计（重生成 HTML 主产物）。"""
+    with lock:
+        if state["phase"] not in ("ready",):
+            return jsonify({"error": "请等待生成完成再重新设计"}), 409
+        if not state["slides"]:
+            return jsonify({"error": "没有可设计的页面"}), 400
+        state["phase"] = "designing"
+
+    def worker():
+        try:
+            _design_and_save()
+        finally:
+            state["phase"] = "ready"
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({"ok": True})
+
+
 @app.route("/images/<path:filename>")
 def images(filename):
     return send_from_directory(IMAGES_DIR, filename)
+
+
+@app.route("/decks/<path:filename>")
+def decks(filename):
+    return send_from_directory(DECKS_DIR, filename)
 
 
 if __name__ == "__main__":

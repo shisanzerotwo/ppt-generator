@@ -135,6 +135,12 @@
   .review-badge.ok { background:rgba(22,163,74,.15); color:var(--ok); }
   .review-badge.regenerated { background:rgba(217,119,6,.15); color:var(--warn); }
   .review-badge.fail { background:rgba(220,38,38,.15); color:var(--danger); }
+  /* ===== AI 设计稿预览 ===== */
+  #deck-preview { margin-bottom:24px; }
+  .deck-bar { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .deck-bar b { font-size:14px; }
+  .deck-frame { width:100%; height:72vh; border:1px solid var(--border); border-radius:12px;
+                background:#0f172a; box-shadow:0 4px 24px rgba(0,0,0,.10); }
 </style>
 </head>
 <body>
@@ -159,6 +165,7 @@
     <div class="steps">
       <span class="step" id="step-outline">大纲生成</span>
       <span class="step" id="step-images">逐页生图</span>
+      <span class="step" id="step-design">AI 设计</span>
       <span class="step" id="step-ready">编辑导出</span>
     </div>
     <div id="log"></div>
@@ -167,6 +174,7 @@
     <input id="instruction" placeholder="对话修改，如：把第 3 页改得更简洁 / 整篇换成商务风格" />
     <button class="btn-outline" id="btn-refine" onclick="doRefine()" disabled>修改</button>
   </div>
+  <div id="deck-preview"></div>
   <div id="cards"></div>
 </div>
 <div class="toast" id="toast"></div>
@@ -250,6 +258,7 @@ async function refresh() {
   renderSteps(s.phase);
   renderLog(s.log);
   applyTheme(s.theme);
+  renderPreview(s);
   renderCards(s);
   if (s.phase === 'idle' || s.phase === 'ready') {
     if (polling) { clearInterval(polling); polling = null; }
@@ -263,6 +272,28 @@ async function refresh() {
       if (last.msg.startsWith('生成中断')) toast('生成失败：' + last.msg, 6000);
     }
   }
+}
+
+function renderPreview(s) {
+  const el = document.getElementById('deck-preview');
+  const sig = (s.phase === 'ready' && s.html_path) ? s.html_path : '';
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  if (!sig) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="deck-bar"><b>🎨 AI 设计稿（主产物）</b>
+    <button class="btn-outline btn-sm" onclick="window.open('${s.html_path}','_blank')">新标签打开</button>
+    <button class="btn-outline btn-sm" onclick="doRedesign()">重新设计</button></div>
+    <iframe class="deck-frame" src="${s.html_path}?t=${Date.now()}"></iframe>`;
+}
+
+async function doRedesign() {
+  const r = await fetch('/api/redesign', {method:'POST'});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('AI 正在重新设计 HTML…');
+  if (polling) clearInterval(polling);
+  polling = setInterval(refresh, 1000);
+  refresh();
 }
 
 async function doRefine() {
@@ -283,10 +314,11 @@ async function doRefine() {
 }
 
 function renderSteps(phase) {
-  const m = {'outline': ['active','',''], 'images': ['done','active',''],
-             'refining': ['done','done','active'], 'ready': ['done','done','done']};
-  const v = m[phase] || ['','',''];
-  ['step-outline','step-images','step-ready'].forEach((id, i) => {
+  const m = {'outline': ['active','','',''], 'images': ['done','active','',''],
+             'designing': ['done','done','active',''], 'refining': ['done','done','active',''],
+             'ready': ['done','done','done','done']};
+  const v = m[phase] || ['','','',''];
+  ['step-outline','step-images','step-design','step-ready'].forEach((id, i) => {
     document.getElementById(id).className = 'step ' + v[i];
   });
 }
