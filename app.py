@@ -13,6 +13,7 @@ import critic
 import html_gen
 import image_gen
 import outline
+import style as style_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -22,7 +23,9 @@ DECKS_DIR = os.path.join(OUTPUT_DIR, "decks")
 state = {
     "topic": "",
     "phase": "idle",  # idle / outline / images / designing / ready
-    "theme": "blue",  # blue / dark / green（色板来自 ppt-maker skill）
+    "theme": "blue",  # 卡片区底色（固定值，视觉风格由 AI 按主题选定）
+    "style": None,    # AI 选定的风格 key（style.STYLE_LIBRARY）
+    "style_name": "", # AI 选定风格名（前端展示）
     "slides": [],     # {title, points, image_prompt, image, imageStatus}
     "html_path": None,  # AI 自主设计的 HTML 主产物（web 路径 /decks/xxx.html）
     "log": [],
@@ -51,14 +54,15 @@ def _parse_upload(file) -> str:
     return file.read().decode("utf-8", errors="ignore")
 
 
-def _start_generation(content: str, from_text: bool, theme: str) -> bool:
+def _start_generation(content: str, from_text: bool) -> bool:
     """锁内初始化 state 并启动后台 worker，避免 phase 置位竞态。"""
     with lock:
         if state["phase"] not in ("idle", "ready"):
             return False
         state["topic"] = content
-        state["theme"] = theme
         state["slides"] = []
+        state["style"] = None
+        state["style_name"] = ""
         state["html_path"] = None
         state["log"] = []
         state["phase"] = "outline"
@@ -72,11 +76,12 @@ def _design_and_save():
     with lock:
         slides = [dict(s) for s in state["slides"]]
         topic = state["topic"]
+        chosen_style = style_mod.STYLE_LIBRARY.get(state.get("style"))
     _phase("designing")
     _log("AI 正在自主设计 HTML 幻灯片…")
     image_map = {i: f"../images/slide_{i}.png" for i, s in enumerate(slides) if s.get("image")}
     try:
-        doc = html_gen.generate_html_deck(topic, slides, image_map)
+        doc = html_gen.generate_html_deck(topic, slides, image_map, chosen_style)
         os.makedirs(DECKS_DIR, exist_ok=True)
         safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
         out_path = os.path.join(DECKS_DIR, f"{safe_topic}_{time.strftime('%Y%m%d_%H%M%S')}.html")
@@ -112,7 +117,17 @@ def _generation_worker(content: str, from_text: bool = False):
                  "review": {"ok": True, "reason": "", "tries": 0}}
                 for s in slides
             ]
-        _log(f"大纲完成，共 {len(slides)} 页，开始逐页生图")
+        _log(f"大纲完成，共 {len(slides)} 页，AI 正在判断视觉风格")
+        # 智能选风格：AI 根据主题/内容从风格库中自主判断（ppt-maker skill 规范）
+        with lock:
+            cur_topic = state["topic"]
+        chosen = style_mod.decide_style(cur_topic, slides)
+        with lock:
+            state["style"] = chosen.get("key")
+            state["style_name"] = chosen.get("name", "")
+        reason = f"（{chosen['reason']}）" if chosen.get("reason") else ""
+        _log(f"AI 选定风格：{chosen.get('name')} {reason}")
+        _log("开始逐页生图")
         _phase("images")
 
         for i, s in enumerate(slides):
@@ -179,8 +194,7 @@ def api_generate():
     topic = (data.get("topic") or "").strip()
     if not isinstance(topic, str) or not topic:
         return jsonify({"error": "主题不能为空"}), 400
-    theme = data.get("theme") if data.get("theme") in builder.THEMES else "blue"
-    if not _start_generation(topic, False, theme):
+    if not _start_generation(topic, False):
         return jsonify({"error": "正在生成中，请等待完成"}), 409
     return jsonify({"ok": True})
 
@@ -191,8 +205,9 @@ def api_import():
     text = (data.get("text") or "").strip()
     if not isinstance(text, str) or len(text) < 30:
         return jsonify({"error": "文档内容过短，请提供更完整的文档"}), 400
-    theme = data.get("theme") if data.get("theme") in builder.THEMES else "blue"
-    if not _start_generation(text, True, theme):
+    if len(text.strip()) < 30:
+        return jsonify({"error": "文档内容过短，请提供更完整的文档"}), 400
+    if not _start_generation(text.strip(), True):
         return jsonify({"error": "正在生成中，请等待完成"}), 409
     return jsonify({"ok": True})
 
@@ -208,8 +223,7 @@ def api_import_file():
         return jsonify({"error": f"文件解析失败：{e}"}), 400
     if len(text.strip()) < 30:
         return jsonify({"error": "文档内容过短"}), 400
-    theme = request.form.get("theme") if request.form.get("theme") in builder.THEMES else "blue"
-    if not _start_generation(text.strip(), True, theme):
+    if not _start_generation(text.strip(), True):
         return jsonify({"error": "正在生成中，请等待完成"}), 409
     return jsonify({"ok": True})
 
@@ -341,7 +355,7 @@ def api_export():
         phase = state["phase"]
         slides = [dict(s) for s in state["slides"]]
         topic = state["topic"]
-        theme = state["theme"]
+        theme = style_mod.THEME_MAP.get(state.get("style"), state["theme"])
     if phase != "ready":
         return jsonify({"error": "生成尚未完成，无法导出"}), 409
     if not slides:
@@ -409,7 +423,7 @@ def api_export_pdf():
         phase = state["phase"]
         slides = [dict(s) for s in state["slides"]]
         topic = state["topic"]
-        theme = state["theme"]
+        theme = style_mod.THEME_MAP.get(state.get("style"), state["theme"])
     if phase != "ready" or not slides:
         return jsonify({"error": "生成尚未完成，无法导出"}), 409
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -521,7 +535,7 @@ def api_export_html():
         phase = state["phase"]
         slides = [dict(s) for s in state["slides"]]
         topic = state["topic"]
-        theme = state["theme"]
+        theme = style_mod.THEME_MAP.get(state.get("style"), state["theme"])
     if phase != "ready":
         return jsonify({"error": "生成尚未完成，无法导出"}), 409
     if not slides:

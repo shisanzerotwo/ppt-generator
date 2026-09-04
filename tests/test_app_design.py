@@ -7,7 +7,7 @@ import app as app_module
 
 def test_design_encodes_unsafe_topic(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "DECKS_DIR", str(tmp_path))
-    monkeypatch.setattr(app_module.html_gen, "generate_html_deck", lambda t, s, m: "<html></html>")
+    monkeypatch.setattr(app_module.html_gen, "generate_html_deck", lambda t, s, m, st=None: "<html></html>")
     app_module.state["topic"] = "x');alert(1);(`y"
     app_module.state["slides"] = [{"type": "end", "title": "t", "points": [], "image": None}]
     try:

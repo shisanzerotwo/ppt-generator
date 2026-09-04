@@ -83,7 +83,7 @@ def _extract_html(text: str) -> str:
     return text[start : end + len("</html>")]
 
 
-def _build_prompt(topic: str, slides: list[dict], image_map: dict[int, str]) -> str:
+def _build_prompt(topic: str, slides: list[dict], image_map: dict[int, str], style: dict | None = None) -> str:
     deck_slides = []
     for i, s in enumerate(slides):
         item = {
@@ -97,12 +97,18 @@ def _build_prompt(topic: str, slides: list[dict], image_map: dict[int, str]) -> 
             item["image"] = image_map[i]
         deck_slides.append(item)
     slides_json = json.dumps(deck_slides, ensure_ascii=False, indent=1)
-    return PROMPT_TEMPLATE.format(topic=topic, slides_json=slides_json)
+    prompt = PROMPT_TEMPLATE.format(topic=topic, slides_json=slides_json)
+    if style:
+        import style as style_mod
+        guidance = style_mod.style_guidance(style)
+        if guidance:
+            prompt = prompt.replace("【大纲数据】", guidance + "\n\n【大纲数据】", 1)
+    return prompt
 
 
-def generate_html_deck(topic: str, slides: list[dict], image_map: dict[int, str]) -> str:
+def generate_html_deck(topic: str, slides: list[dict], image_map: dict[int, str], style: dict | None = None) -> str:
     """生成完整 HTML 幻灯片文档；输出截断时自动重试一次。"""
-    prompt = _build_prompt(topic, slides, image_map)
+    prompt = _build_prompt(topic, slides, image_map, style)
     last_err = None
     for _ in range(2):
         text = _call_llm(prompt)
