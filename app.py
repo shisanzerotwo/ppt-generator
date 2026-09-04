@@ -579,6 +579,31 @@ def decks(filename):
     return send_from_directory(DECKS_DIR, filename)
 
 
+@app.route("/api/decks")
+def api_decks():
+    """列出历史设计稿，供侧栏历史项目区（按时间倒序，最多 30 条）。"""
+    if not os.path.isdir(DECKS_DIR):
+        return jsonify({"decks": []})
+    items = []
+    for name in os.listdir(DECKS_DIR):
+        if not name.lower().endswith(".html"):
+            continue
+        full = os.path.join(DECKS_DIR, name)
+        stem = name[:-5]
+        # 文件名格式：<主题>_<YYYYmmdd>_<HHMMSS>.html，拆出主题与时间
+        parts = stem.rsplit("_", 2)
+        title = parts[0].replace("_", " ") if len(parts) == 3 else stem
+        items.append({
+            "title": title,
+            "url": f"/decks/{quote(name)}",
+            "mtime": os.path.getmtime(full),
+        })
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    for it in items:
+        it["when"] = time.strftime("%m-%d %H:%M", time.localtime(it.pop("mtime")))
+    return jsonify({"decks": items[:30]})
+
+
 if __name__ == "__main__":
     os.makedirs(IMAGES_DIR, exist_ok=True)
     app.run(host="127.0.0.1", port=5000, debug=False)

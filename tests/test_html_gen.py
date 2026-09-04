@@ -53,7 +53,10 @@ def test_generate_success(monkeypatch):
 
     monkeypatch.setattr(html_gen, "_call_llm", fake_call)
     out = html_gen.generate_html_deck("测试主题", SLIDES, {0: "../images/slide_0.png"})
-    assert out == GOOD_HTML
+    # 返回值包含原始内容，并补注入打印分页 CSS
+    assert '<style>.slide{}</style>' in out
+    assert "@page { size: 1280px 720px" in out
+    assert out.rstrip().endswith("</html>")
     assert len(calls) == 1
 
 
@@ -67,7 +70,7 @@ def test_generate_retry_on_truncation(monkeypatch):
 
     monkeypatch.setattr(html_gen, "_call_llm", fake_call)
     out = html_gen.generate_html_deck("测试主题", SLIDES, {})
-    assert out == GOOD_HTML
+    assert "@page { size: 1280px 720px" in out
     assert len(attempts) == 2  # 截断后重试了一次
 
 

@@ -5,431 +5,398 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PPT 制作台</title>
 <style>
+/* ===== 设计 token（方案 A 专业工作台：中性石墨 + 青瓷强调，弃靛蓝）===== */
+:root {
+  --bg:#f7f7f8; --surface:#ffffff; --raised:#fbfbfc; --border:#e4e4e7;
+  --fg:#18181b; --muted:#71717a; --faint:#a1a1aa;
+  --accent:#0d9488; --accent-hover:#0f766e; --accent-soft:rgba(13,148,136,.09);
+  --ok:#15803d; --warn:#b45309; --danger:#b91c1c;
+  --r-lg:10px; --r:8px;
+  --sidebar-w:248px;
+  --sans:"Noto Sans SC","Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+  --mono:ui-monospace,"Cascadia Code","Consolas",monospace;
+  --t:.15s ease-out;
+}
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg:#fafafa; --panel:#ffffff; --card:#ffffff; --border:#e5e7eb;
-    --fg:#111827; --muted:#6b7280; --accent:#4f46e5; --ok:#16a34a;
-    --warn:#d97706; --danger:#dc2626;
+    --bg:#09090b; --surface:#141416; --raised:#1c1c1f; --border:#27272a;
+    --fg:#fafafa; --muted:#a1a1aa; --faint:#71717a;
+    --accent:#14b8a6; --accent-hover:#2dd4bf; --accent-soft:rgba(20,184,166,.12);
+    --ok:#4ade80; --warn:#fbbf24; --danger:#f87171;
   }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font-family:"Inter","Segoe UI","Microsoft YaHei","Noto Sans SC",sans-serif;
-         -webkit-font-smoothing:antialiased; }
-  ::selection { background:rgba(79,70,229,.15); }
-  button, input, select, textarea { font-family:inherit; }
-  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
-    outline:2px solid var(--accent); outline-offset:1px; }
-
-  /* ===== 顶栏 ===== */
-  .topbar { background:var(--panel); padding:14px 28px; display:flex; align-items:center;
-            gap:12px; border-bottom:1px solid var(--border); position:sticky; top:0;
-            z-index:10; flex-wrap:wrap; }
-  .topbar h1 { font-size:18px; font-weight:700; letter-spacing:-.01em; margin:0 16px 0 0; white-space:nowrap;
-               color:var(--fg); display:flex; align-items:center; gap:8px; }
-  .topbar h1 .dot { width:7px; height:7px; border-radius:50%; background:var(--accent); }
-  .topbar input#topic { flex:1; min-width:200px; padding:10px 14px; font-size:15px; color:var(--fg);
-                        background:#fff; border:1px solid var(--border); border-radius:10px;
-                        transition:border-color .15s ease, box-shadow .15s ease; }
-  .topbar input#topic::placeholder { color:var(--muted); }
-  .topbar input#topic:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
-  .topbar select { padding:9px 11px; color:var(--fg); background:#fff;
-                   border:1px solid var(--border); border-radius:10px; font-size:14px; }
-
-  /* ===== 按钮 ===== */
-  button { padding:9px 16px; border:none; border-radius:10px; font-size:14px; cursor:pointer;
-           transition:background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease; }
-  button:disabled { opacity:.4; cursor:not-allowed; }
-  .btn-primary { background:var(--accent); color:#fff; font-weight:600; }
-  .btn-primary:not(:disabled):hover { background:#4338ca; }
-  .btn-outline { background:transparent; color:var(--accent); border:1px solid var(--accent); }
-  .btn-outline:not(:disabled):hover { background:rgba(79,70,229,.07); }
-  .btn-sm { padding:5px 12px; font-size:13px; border-radius:8px; }
-
-  /* ===== 主区 ===== */
-  .main { max-width:1120px; margin:0 auto; padding:28px 28px 64px; }
-
-  /* ===== 进度区 ===== */
-  .progress { background:var(--panel); border:1px solid var(--border); border-radius:12px;
-              padding:16px 20px; margin-bottom:28px; }
-  .steps { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; }
-  .step { padding:5px 14px; border-radius:999px; font-size:13px; color:var(--muted);
-          background:var(--bg); border:1px solid transparent; }
-  .step.active { color:var(--accent); background:rgba(79,70,229,.08); font-weight:600; }
-  .step.done { color:var(--ok); background:rgba(22,163,74,.08); }
-  .step.done::before { content:"✓"; margin-right:5px; color:var(--ok); }
-  #log { font-size:13px; color:var(--muted); max-height:120px; overflow-y:auto; line-height:1.7;
-         font-variant-numeric:tabular-nums; }
-  #log div { padding:1px 0; }
-
-  /* ===== 页面卡片 ===== */
-  .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
-          margin-bottom:20px; overflow:hidden; transition:border-color .15s ease; }
-  .card:hover { border-color:#d1d5db; }
-  .card-head { padding:10px 18px; font-size:14px; color:var(--fg); border-bottom:1px solid var(--border);
-               display:flex; justify-content:space-between; align-items:center; gap:10px; }
-  .card-body { padding:20px; display:flex; gap:22px; }
-  .card-body.cover { flex-direction:column; align-items:center; padding:36px 20px; }
-
-  /* 预览卡片内部（按 PPT 主题色，深色"画布"贴纸感，与浅色壳对比） */
-  #cards { --deck-bg:#1a1d26; --deck-fg:#e8eaf0; --deck-muted:#8b93a3; --deck-accent:#4f46e5; }
-  .card.themed { background:var(--deck-bg); color:var(--deck-fg); box-shadow:0 8px 28px rgba(17,24,39,.12); }
-  .card.themed .card-head { color:var(--deck-fg); border-bottom:1px solid rgba(255,255,255,.12); background:rgba(0,0,0,.12); }
-  .card.themed:hover { border-color:var(--deck-accent); }
-  .card.themed .card-body { border-left:5px solid var(--deck-accent); }
-  .card.themed input.title, .card.themed textarea, .card.themed .img-tools input {
-    background:rgba(255,255,255,.07); color:var(--deck-fg); border:1px solid rgba(255,255,255,.16); }
-  .card.themed input.title:focus, .card.themed textarea:focus, .card.themed .img-tools input:focus { border-color:var(--deck-accent); }
-  .card.themed .img-area { background:rgba(255,255,255,.05); }
-  .card.themed .btn-outline { color:var(--deck-accent); border-color:var(--deck-accent); }
-  .card.themed .btn-outline:hover { background:rgba(255,255,255,.1); }
-  .card.themed .type-badge { background:var(--deck-accent); color:#fff; }
-
-  /* ===== 编辑控件 ===== */
-  .col-text { flex:1; min-width:0; }
-  .col-img { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
-  .col-text input.title { width:100%; font-size:17px; font-weight:600; padding:8px 10px;
-                          border-radius:8px; margin-bottom:12px; }
-  .col-text textarea { width:100%; min-height:170px; font-size:14px; padding:8px 10px; line-height:1.9;
-                       border-radius:8px; resize:vertical; }
-  .img-area { position:relative; min-height:260px; border-radius:8px;
-              display:flex; align-items:center; justify-content:center; overflow:hidden; }
-  .img-area img { max-width:100%; max-height:360px; border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,.35); }
-  .img-area .placeholder { color:var(--deck-muted); font-size:14px; }
-  .spinner { width:34px; height:34px; border:3px solid rgba(255,255,255,.15); border-top-color:var(--deck-accent);
-             border-radius:50%; animation:spin 1s linear infinite; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  .img-tools { display:flex; gap:8px; }
-  .img-tools input { flex:1; padding:6px 10px; font-size:13px; border-radius:8px; }
-
-  /* ===== 版式徽章 & 居中版式 ===== */
-  .type-badge { font-size:11px; padding:2px 10px; border-radius:999px; background:var(--deck-accent);
-                color:#fff; margin-left:4px; font-weight:700; flex-shrink:0; }
-  .card-body.center { flex-direction:column; align-items:center; justify-content:center; gap:16px;
-                      padding:48px 20px; text-align:center; }
-  .card-body.center input.title { text-align:center; font-size:26px; max-width:620px; }
-  .card-body.center .lead { color:var(--deck-muted); font-size:14px; max-width:520px; }
-  .chart-css { width:100%; max-width:560px; margin:0 auto; }
-  .bar-row { display:flex; align-items:center; gap:10px; margin-bottom:12px; font-size:14px; }
-  .bar-label { width:8rem; text-align:right; color:var(--deck-muted); flex-shrink:0; }
-  .bar-track { flex:1; background:rgba(255,255,255,.12); border-radius:6px; height:22px; overflow:hidden; }
-  .bar { display:block; height:100%; background:var(--deck-accent); border-radius:6px; }
-  /* 时间线 & 对比预览 */
-  .timeline-css { display:flex; position:relative; padding-top:22px; width:100%; max-width:760px; margin:0 auto; }
-  .timeline-css::before { content:""; position:absolute; top:10px; left:4%; right:4%; height:3px; background:var(--deck-accent); }
-  .tl-node { flex:1; text-align:center; position:relative; padding:0 4px; }
-  .tl-dot { width:12px; height:12px; border-radius:50%; background:var(--deck-accent); margin:0 auto 8px; border:2px solid var(--deck-bg); }
-  .tl-node span { font-size:12px; color:var(--deck-fg); display:block; line-height:1.5; }
-  .compare-css { display:flex; gap:16px; width:100%; max-width:760px; margin:0 auto; }
-  .cmp-col { flex:1; border-top:3px solid var(--deck-accent); padding-top:12px; text-align:left; }
-  .cmp-col div { font-size:13px; color:var(--deck-muted); padding:4px 0; }
-
-  /* ===== toast ===== */
-  .toast { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); background:#111827;
-           color:#f9fafb; padding:12px 22px; border-radius:10px; font-size:14px; display:none;
-           z-index:99; max-width:80vw; word-break:break-all; box-shadow:0 8px 30px rgba(0,0,0,.28); }
-  /* 对话修改工具条 + 校验徽章 */
-  .refine-bar { display:flex; gap:10px; margin-bottom:24px; }
-  .refine-bar input { flex:1; padding:10px 14px; font-size:14px; color:var(--fg); background:#fff;
-                      border:1px solid var(--border); border-radius:10px; }
-  .refine-bar input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(79,70,229,.12); }
-  .review-badge { font-size:11px; padding:2px 10px; border-radius:999px; margin-left:8px; font-weight:700; flex-shrink:0; }
-  .review-badge.ok { background:rgba(22,163,74,.15); color:var(--ok); }
-  .review-badge.regenerated { background:rgba(217,119,6,.15); color:var(--warn); }
-  .review-badge.fail { background:rgba(220,38,38,.15); color:var(--danger); }
-  /* ===== AI 设计稿预览 ===== */
-  #deck-preview { margin-bottom:24px; }
-  .deck-bar { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-  .deck-bar b { font-size:14px; }
-  .deck-frame { width:100%; height:72vh; border:1px solid var(--border); border-radius:12px;
-                background:#0f172a; box-shadow:0 4px 24px rgba(0,0,0,.10); }
+}
+* { box-sizing:border-box; }
+html, body { height:100%; }
+body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--sans);
+       font-size:14px; line-height:1.6; -webkit-font-smoothing:antialiased; }
+::selection { background:var(--accent-soft); }
+button, input, select, textarea { font-family:inherit; font-size:inherit; color:inherit; }
+:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+svg { flex-shrink:0; }
+/* ===== 布局：固定侧栏 + 主工作区 ===== */
+.layout { display:flex; min-height:100vh; }
+.sidebar { width:var(--sidebar-w); flex-shrink:0; background:var(--surface);
+           border-right:1px solid var(--border); display:flex; flex-direction:column;
+           position:sticky; top:0; height:100vh; }
+.brand { display:flex; align-items:center; gap:9px; padding:20px 20px 16px;
+         font-size:15px; font-weight:700; letter-spacing:-.01em; }
+.brand svg { color:var(--accent); }
+.side-sec { padding:0 12px 8px; }
+.side-label { padding:10px 8px 6px; font-size:11px; font-weight:600; color:var(--faint);
+              letter-spacing:.06em; text-transform:uppercase; }
+.side-item { display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px;
+             border:none; background:none; border-radius:var(--r); cursor:pointer;
+             color:var(--muted); text-align:left; transition:background var(--t), color var(--t); }
+.side-item:hover { background:var(--accent-soft); color:var(--fg); }
+.side-item.primary { background:var(--accent); color:#fff; font-weight:600; }
+.side-item.primary:hover { background:var(--accent-hover); }
+.side-item span.meta { margin-left:auto; font-size:11px; color:var(--faint); font-family:var(--mono); }
+.side-item .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.side-item:disabled { opacity:.4; cursor:not-allowed; }
+#deck-list { flex:1; overflow-y:auto; padding:0 12px 12px; }
+#deck-list:empty::after { content:"暂无历史"; display:block; padding:8px 10px;
+                          font-size:12px; color:var(--faint); }
+.side-foot { border-top:1px solid var(--border); padding:10px 12px; }
+.workspace { flex:1; min-width:0; display:flex; flex-direction:column; }
+/* ===== 顶栏（瘦身：仅输入 + 生成）===== */
+.topbar { display:flex; align-items:center; gap:10px; padding:14px 28px;
+          background:var(--surface); border-bottom:1px solid var(--border);
+          position:sticky; top:0; z-index:20; }
+.field { flex:1; display:flex; align-items:center; gap:8px; padding:0 12px;
+         background:var(--bg); border:1px solid var(--border); border-radius:var(--r);
+         transition:border-color var(--t), box-shadow var(--t); }
+.field:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.field svg { color:var(--faint); }
+.field input { flex:1; padding:9px 0; border:none; background:none; outline:none; }
+.field input::placeholder { color:var(--faint); }
+.pill-badge { display:none; align-items:center; gap:6px; padding:4px 11px; border-radius:999px;
+              background:var(--accent-soft); color:var(--accent); font-size:12px; font-weight:600;
+              white-space:nowrap; }
+/* ===== 按钮 ===== */
+.btn { display:inline-flex; align-items:center; gap:7px; padding:9px 15px; border-radius:var(--r);
+       border:1px solid transparent; cursor:pointer; font-weight:500; white-space:nowrap;
+       transition:background var(--t), border-color var(--t), color var(--t), opacity var(--t); }
+.btn:disabled { opacity:.4; cursor:not-allowed; }
+.btn-primary { background:var(--accent); color:#fff; font-weight:600; }
+.btn-primary:not(:disabled):hover { background:var(--accent-hover); }
+.btn-ghost { background:transparent; border-color:var(--border); color:var(--fg); }
+.btn-ghost:not(:disabled):hover { background:var(--accent-soft); border-color:var(--accent); }
+.btn-sm { padding:5px 11px; font-size:13px; }
+/* ===== 导出下拉（原生 details，零 JS 依赖）===== */
+.menu { position:relative; }
+.menu > summary { list-style:none; cursor:pointer; }
+.menu > summary::-webkit-details-marker { display:none; }
+.menu[open] > summary .chev { transform:rotate(180deg); }
+.chev { transition:transform var(--t); }
+.menu-body { position:absolute; right:0; bottom:calc(100% + 6px); min-width:180px; z-index:30;
+             background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg);
+             box-shadow:0 12px 32px rgba(0,0,0,.14); padding:6px; }
+.menu-body button { display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px;
+                    border:none; background:none; border-radius:6px; cursor:pointer;
+                    color:var(--fg); text-align:left; transition:background var(--t); }
+.menu-body button:hover:not(:disabled) { background:var(--accent-soft); }
+.menu-body button:disabled { opacity:.4; cursor:not-allowed; }
+/* ===== 主区容器 ===== */
+.main { flex:1; padding:28px; max-width:1180px; width:100%; margin:0 auto; }
+.panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); }
+/* ===== 首屏引导（未生成时）===== */
+.hero { display:flex; flex-direction:column; align-items:center; justify-content:center;
+        text-align:center; padding:80px 24px; gap:14px; }
+.hero .icon { width:52px; height:52px; border-radius:14px; background:var(--accent-soft);
+              color:var(--accent); display:flex; align-items:center; justify-content:center; }
+.hero h2 { margin:6px 0 0; font-size:20px; font-weight:700; letter-spacing:-.01em; }
+.hero p { margin:0; color:var(--muted); max-width:440px; }
+.chips { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:10px; }
+.chip { padding:6px 13px; border-radius:999px; border:1px solid var(--border);
+        background:var(--surface); color:var(--muted); cursor:pointer; font-size:13px;
+        transition:border-color var(--t), color var(--t), background var(--t); }
+.chip:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+/* ===== 进度区（真实进度条 + 阶段）===== */
+#progress { margin-bottom:20px; padding:16px 20px; }
+.track { height:3px; background:var(--border); border-radius:999px; overflow:hidden; margin-bottom:14px; }
+.track > i { display:block; height:100%; width:0; border-radius:999px;
+             background:linear-gradient(90deg,var(--accent),var(--accent-hover));
+             transition:width .45s cubic-bezier(.4,0,.2,1); }
+.stages { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.stage { display:flex; align-items:center; gap:6px; padding:4px 12px; border-radius:999px;
+         font-size:12.5px; color:var(--faint); background:var(--bg); border:1px solid transparent; }
+.stage .n { width:16px; height:16px; border-radius:50%; border:1.5px solid currentColor;
+            display:flex; align-items:center; justify-content:center; font-size:10px;
+            font-family:var(--mono); flex-shrink:0; }
+.stage.active { color:var(--accent); background:var(--accent-soft);
+                border-color:var(--accent); font-weight:600; }
+.stage.active .n { border-style:dashed; animation:spin 2.4s linear infinite; }
+.stage.done { color:var(--ok); background:transparent; }
+.stage.done .n { border-color:var(--ok); background:var(--ok); color:var(--surface); }
+@keyframes spin { to { transform:rotate(360deg); } }
+/* ===== 日志（等宽 + 可折叠）===== */
+.log-wrap { margin-top:12px; border-top:1px solid var(--border); padding-top:10px; }
+.log-wrap[open] summary .chev { transform:rotate(180deg); }
+.log-wrap summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px;
+                    font-size:12px; color:var(--muted); }
+.log-wrap summary::-webkit-details-marker { display:none; }
+#log { margin-top:8px; max-height:150px; overflow-y:auto; font-family:var(--mono);
+       font-size:11.5px; line-height:1.75; color:var(--muted); }
+#log b { color:var(--faint); font-weight:400; margin-right:7px; }
+/* ===== AI 设计稿预览 ===== */
+#deck-preview { margin-bottom:20px; }
+.sec-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.sec-head h3 { margin:0; font-size:13px; font-weight:600; letter-spacing:.02em;
+               color:var(--muted); display:flex; align-items:center; gap:7px; }
+.sec-head h3 svg { color:var(--accent); }
+.sec-head .sp { flex:1; }
+.deck-frame { display:block; width:100%; height:74vh; border:1px solid var(--border);
+              border-radius:var(--r-lg); background:#0f172a;
+              box-shadow:0 8px 30px rgba(0,0,0,.10); }
+/* ===== 对话修改条 ===== */
+.refine { display:flex; gap:10px; margin-bottom:20px; }
+/* ===== 页面编辑卡片 ===== */
+#cards { --deck-bg:#1a1d26; --deck-fg:#e8eaf0; --deck-muted:#8b93a3; --deck-accent:#0d9488; }
+.card { border:1px solid var(--border); border-radius:var(--r-lg); margin-bottom:14px;
+        overflow:hidden; background:var(--deck-bg); color:var(--deck-fg);
+        transition:border-color var(--t); }
+.card:hover { border-color:var(--deck-accent); }
+.card-head { display:flex; align-items:center; gap:8px; padding:9px 16px; font-size:13px;
+             background:rgba(0,0,0,.16); border-bottom:1px solid rgba(255,255,255,.09); }
+.card-head .no { font-family:var(--mono); color:var(--deck-muted); flex-shrink:0; }
+.card-head .ttl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.card-head .sp { flex:1; }
+.card-body { padding:18px; display:flex; gap:20px; }
+.card-body.center { flex-direction:column; align-items:center; justify-content:center;
+                    gap:14px; padding:44px 20px; text-align:center; }
+.tag { padding:2px 9px; border-radius:999px; background:var(--deck-accent); color:#fff;
+       font-size:10.5px; font-weight:700; flex-shrink:0; letter-spacing:.02em; }
+.tag.sub { background:rgba(255,255,255,.14); color:var(--deck-fg); }
+.chk { display:inline-flex; align-items:center; gap:4px; padding:2px 9px; border-radius:999px;
+       font-size:10.5px; font-weight:600; flex-shrink:0; }
+.chk.ok { background:rgba(34,197,94,.16); color:#4ade80; }
+.chk.re { background:rgba(251,191,36,.16); color:#fbbf24; }
+.chk.no { background:rgba(248,113,113,.16); color:#f87171; }
+.card .btn-ghost { border-color:rgba(255,255,255,.2); color:var(--deck-fg); }
+.card .btn-ghost:hover { background:rgba(255,255,255,.1); border-color:var(--deck-accent); }
+/* ===== 卡片内编辑控件 ===== */
+.col-text { flex:1; min-width:0; }
+.col-img { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; }
+.card input.title, .card textarea, .card .img-tools input {
+  width:100%; background:rgba(255,255,255,.06); color:var(--deck-fg);
+  border:1px solid rgba(255,255,255,.14); border-radius:var(--r); padding:8px 11px; outline:none;
+  transition:border-color var(--t); }
+.card input.title { font-size:16px; font-weight:600; margin-bottom:10px; }
+.card textarea { min-height:150px; line-height:1.85; resize:vertical; font-size:13.5px; }
+.card .img-tools input { font-size:12.5px; padding:6px 10px; }
+.card input:focus, .card textarea:focus { border-color:var(--deck-accent); }
+.card-body.center input.title { text-align:center; font-size:22px; max-width:600px; margin:0; }
+.lead { color:var(--deck-muted); font-size:13px; max-width:520px; }
+.img-area { position:relative; min-height:230px; border-radius:var(--r);
+            background:rgba(255,255,255,.04); display:flex; align-items:center;
+            justify-content:center; overflow:hidden; }
+.img-area img { max-width:100%; max-height:330px; border-radius:6px;
+                box-shadow:0 6px 22px rgba(0,0,0,.4); }
+.img-area .ph { color:var(--deck-muted); font-size:13px; }
+.loader { width:30px; height:30px; border:2.5px solid rgba(255,255,255,.14);
+          border-top-color:var(--deck-accent); border-radius:50%; animation:spin .9s linear infinite; }
+.img-tools { display:flex; gap:8px; }
+/* ===== 预览内的图表 / 时间线 / 对比 ===== */
+.viz { width:100%; max-width:560px; margin:0 auto; }
+.bar-row { display:flex; align-items:center; gap:10px; margin-bottom:11px; font-size:13px; }
+.bar-label { width:7.5rem; text-align:right; color:var(--deck-muted); flex-shrink:0; }
+.bar-track { flex:1; height:20px; background:rgba(255,255,255,.1); border-radius:5px; overflow:hidden; }
+.bar-track > i { display:block; height:100%; background:var(--deck-accent); border-radius:5px; }
+.bar-val { width:2.6rem; font-family:var(--mono); font-size:12px; }
+.tl { display:flex; position:relative; padding-top:20px; width:100%; max-width:760px; margin:0 auto; }
+.tl::before { content:""; position:absolute; top:9px; left:4%; right:4%; height:2px;
+              background:var(--deck-accent); }
+.tl-node { flex:1; text-align:center; padding:0 5px; }
+.tl-dot { width:11px; height:11px; border-radius:50%; background:var(--deck-accent);
+          margin:0 auto 9px; border:2px solid var(--deck-bg); }
+.tl-node span { font-size:11.5px; line-height:1.5; display:block; }
+.cmp { display:flex; gap:16px; width:100%; max-width:760px; margin:0 auto; }
+.cmp-col { flex:1; border-top:2px solid var(--deck-accent); padding-top:11px; text-align:left; }
+.cmp-col div { font-size:12.5px; color:var(--deck-muted); padding:3px 0; }
+/* ===== toast ===== */
+#toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(8px);
+         background:var(--fg); color:var(--bg); padding:11px 20px; border-radius:var(--r);
+         font-size:13px; z-index:99; max-width:min(70vw,620px); word-break:break-all;
+         box-shadow:0 10px 34px rgba(0,0,0,.3); opacity:0; pointer-events:none;
+         transition:opacity var(--t), transform var(--t); }
+#toast.on { opacity:1; transform:translateX(-50%) translateY(0); }
+@media (max-width:960px) {
+  .sidebar { display:none; }
+  .main { padding:18px; }
+}
 </style>
 </head>
 <body>
-<div class="topbar">
-  <h1><span class="dot"></span>PPT 制作台</h1>
-  <input id="topic" placeholder="输入主题，如：青少年为什么要学编程" />
-  <button class="btn-primary" id="btn-gen" onclick="doGenerate()">生成</button>
-  <button class="btn-outline" id="btn-import" onclick="document.getElementById('file-input').click()">导入文档</button>
-  <input type="file" id="file-input" accept=".md,.txt,.docx" style="display:none" onchange="doImport(this)" />
-  <button class="btn-outline" id="btn-export" onclick="doExport()" disabled>导出 pptx</button>
-  <button class="btn-outline" id="btn-export-html" onclick="doExportHtml()" disabled>导出 HTML</button>
-  <button class="btn-outline" id="btn-export-txt" onclick="doExportTxt()" disabled>导出大纲</button>
-  <button class="btn-outline" id="btn-export-pdf" onclick="doExportPdf()" disabled>导出 PDF</button>
-</div>
-<div class="main">
-  <div class="progress">
-    <div class="steps">
-      <span id="style-badge" class="type-badge" style="display:none"></span>
-      <span class="step" id="step-outline">大纲生成</span>
-      <span class="step" id="step-images">逐页生图</span>
-      <span class="step" id="step-design">AI 设计</span>
-      <span class="step" id="step-ready">编辑导出</span>
-    </div>
-    <div id="log"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+      <rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>
+    </svg>PPT 制作台
   </div>
-  <div class="refine-bar">
-    <input id="instruction" placeholder="对话修改，如：把第 3 页改得更简洁 / 整篇换成商务风格" />
-    <button class="btn-outline" id="btn-refine" onclick="doRefine()" disabled>修改</button>
+  <div class="side-sec">
+    <button class="side-item primary" onclick="document.getElementById('topic').focus()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      新建演示
+    </button>
+    <button class="side-item" onclick="document.getElementById('file-input').click()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+      导入文档
+    </button>
+    <input type="file" id="file-input" accept=".md,.txt,.docx" hidden onchange="doImport(this)">
   </div>
-  <div id="deck-preview"></div>
-  <div id="cards"></div>
-</div>
-<div class="toast" id="toast"></div>
+  <div class="side-label">历史设计稿</div>
+  <div id="deck-list"></div>
+  <div class="side-foot">
+    <details class="menu">
+      <summary class="side-item" id="export-trigger">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        <span class="txt">导出</span>
+        <svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="margin-left:auto"><path d="M6 9l6 6 6-6"/></svg>
+      </summary>
+      <div class="menu-body">
+        <button id="ex-html" onclick="doExportHtml()" disabled>HTML 演示版</button>
+        <button id="ex-pptx" onclick="doExport()" disabled>pptx 可编辑版</button>
+        <button id="ex-pdf" onclick="doExportPdf()" disabled>PDF 文档</button>
+        <button id="ex-txt" onclick="doExportTxt()" disabled>大纲 txt</button>
+      </div>
+    </details>
+  </div>
+</aside>
 
+<div class="workspace">
+  <header class="topbar">
+    <label class="field">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="topic" placeholder="输入演示主题，回车开始生成" onkeydown="if(event.key==='Enter')doGenerate()">
+    </label>
+    <span class="pill-badge" id="style-badge"></span>
+    <button class="btn btn-primary" id="btn-gen" onclick="doGenerate()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 3l14 9-14 9V3z"/></svg>
+      生成
+    </button>
+  </header>
+  <main class="main">
+    <section class="panel" id="progress" hidden>
+      <div class="track"><i id="bar"></i></div>
+      <div class="stages">
+        <span class="stage" id="st-outline"><i class="n">1</i>大纲</span>
+        <span class="stage" id="st-images"><i class="n">2</i>配图</span>
+        <span class="stage" id="st-design"><i class="n">3</i>AI 设计</span>
+        <span class="stage" id="st-ready"><i class="n">4</i>就绪</span>
+      </div>
+      <details class="log-wrap">
+        <summary>
+          <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+          运行日志
+        </summary>
+        <div id="log"></div>
+      </details>
+    </section>
+    <div id="hero" class="panel hero">
+      <div class="icon">
+        <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 3l1.9 5.8L20 10l-5.2 3 1.3 6-4.1-3.3L7.9 19l1.3-6L4 10l6.1-1.2z"/></svg>
+      </div>
+      <h2>让 AI 为你设计演示</h2>
+      <p>输入一个主题，AI 会规划大纲、生成配图、判断视觉风格，并自主设计出每页布局各异的幻灯片。</p>
+      <div class="chips">
+        <button class="chip" onclick="useExample(this)">人工智能如何改变教育</button>
+        <button class="chip" onclick="useExample(this)">新能源汽车的发展历程</button>
+        <button class="chip" onclick="useExample(this)">如何做好时间管理</button>
+      </div>
+    </div>
+    <div id="deck-preview"></div>
+    <div class="refine" id="refine-bar" hidden>
+      <label class="field">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <input id="instruction" placeholder="对话修改，如：第 3 页更简洁 / 整篇换商务风格" onkeydown="if(event.key==='Enter')doRefine()">
+      </label>
+      <button class="btn btn-ghost" id="btn-refine" onclick="doRefine()" disabled>应用修改</button>
+    </div>
+    <div id="cards"></div>
+  </main>
+</div>
+</div>
+<div id="toast"></div>
 <script>
 let polling = null;
 
-const THEMES_JS = {
+const DECK_THEMES = {
   blue:  {bg:'#0f2a4a', accent:'#3b82f6', fg:'#ffffff', muted:'#b6c7dc'},
   dark:  {bg:'#111827', accent:'#f59e0b', fg:'#f9fafb', muted:'#9ca3af'},
   green: {bg:'#062e21', accent:'#22c55e', fg:'#ecfdf5', muted:'#a7c4b6'},
 };
+const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文',
+  data:'图表', timeline:'时间线', compare:'对比', end:'总结'};
+const LAYOUT_LABEL = {'image-right':'左文右图', 'image-left':'左图右文', 'image-top':'上图下文',
+  'image-full':'全宽图', 'cards':'三栏卡片', 'columns':'两栏', 'center':'居中'};
+// 进度条百分比：与 renderStages 的阶段映射保持一致
+const PHASE_PCT = {idle:0, outline:22, images:52, designing:80, refining:80, ready:100};
+const EXPORT_IDS = ['ex-html', 'ex-pptx', 'ex-pdf', 'ex-txt'];
 
-const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图文', data:'图表', timeline:'时间线', compare:'对比', end:'总结'};
-const LAYOUT_LABEL = { 'image-right':'左文右图', 'image-left':'左图右文', 'image-top':'上图下文',
-  'image-full':'全宽图', 'cards':'三栏卡片', 'columns':'两栏', 'center':'居中' };
+const $ = id => document.getElementById(id);
 
-function applyTheme(name) {
-  const t = THEMES_JS[name] || THEMES_JS.blue;
-  const el = document.getElementById('cards');
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// URL 白名单：只放行后端产出的两类静态路径，杜绝内联事件/属性里的注入
+function escUrl(u) {
+  const s = String(u ?? '');
+  return /^\/(decks|images)\/[^"'<>\s]*$/.test(s) ? s : '';
+}
+
+let toastTimer = null;
+function toast(msg, ms = 3000) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), ms);
+}
+
+function useExample(btn) {
+  $('topic').value = btn.textContent.trim();
+  $('topic').focus();
+}
+
+function applyDeckTheme(name) {
+  const t = DECK_THEMES[name] || DECK_THEMES.blue;
+  const el = $('cards');
   el.style.setProperty('--deck-bg', t.bg);
   el.style.setProperty('--deck-fg', t.fg);
   el.style.setProperty('--deck-muted', t.muted);
   el.style.setProperty('--deck-accent', t.accent);
 }
 
-function chartHtml(chart) {
-  const labels = chart?.labels || [], values = (chart?.values || []).map(v => Number(v) || 0);
-  const mx = Math.max(...values, 1);
-  return '<div class="chart-css">' + labels.map((l, i) =>
-    `<div class="bar-row"><span class="bar-label">${esc(l)}</span>
-     <span class="bar-track"><span class="bar" style="width:${values[i]/mx*100}%"></span></span>
-     <span class="bar-val">${values[i]}</span></div>`).join('') + '</div>';
+function setExports(disabled) {
+  EXPORT_IDS.forEach(id => { $(id).disabled = disabled; });
 }
 
-function timelineHtml(points) {
-  return '<div class="timeline-css">' + points.map(p =>
-    `<div class="tl-node"><div class="tl-dot"></div><span>${esc(p)}</span></div>`).join('') + '</div>';
+function startPolling() {
+  if (polling) clearInterval(polling);
+  polling = setInterval(refresh, 1000);
+  refresh();
 }
-
-function compareHtml(points) {
-  const mid = Math.ceil(points.length / 2);
-  const col = items => '<div class="cmp-col">' + items.map(p => `<div>▸ ${esc(p)}</div>`).join('') + '</div>';
-  return '<div class="compare-css">' + col(points.slice(0, mid)) + col(points.slice(mid)) + '</div>';
-}
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function toast(msg, ms = 3000) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.style.display = 'block';
-  setTimeout(() => t.style.display = 'none', ms);
+async function post(url, body) {
+  const opt = {method: 'POST'};
+  if (body !== undefined) {
+    opt.headers = {'Content-Type': 'application/json'};
+    opt.body = JSON.stringify(body);
+  }
+  const r = await fetch(url, opt);
+  return {ok: r.ok, data: await r.json()};
 }
 
 async function doGenerate() {
-  const topic = document.getElementById('topic').value.trim();
+  const topic = $('topic').value.trim();
   if (!topic) { toast('请先输入主题'); return; }
-  const r = await fetch('/api/generate', {method:'POST', headers:{'Content-Type':'application/json'},
-                                           body: JSON.stringify({topic})});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error); return; }
-  document.getElementById('btn-gen').disabled = true;
-  setExportButtons(true);
-  if (polling) clearInterval(polling);
-  polling = setInterval(refresh, 1000);
-  refresh();
-}
-
-function setExportButtons(disabled) {
-  ['btn-export', 'btn-export-html', 'btn-export-txt', 'btn-export-pdf'].forEach(id => {
-    document.getElementById(id).disabled = disabled;
-  });
-}
-
-async function refresh() {
-  const r = await fetch('/api/status');
-  const s = await r.json();
-  renderSteps(s.phase);
-  const badge = document.getElementById('style-badge');
-  if (s.style_name) { badge.textContent = '🎨 AI 风格：' + s.style_name; badge.style.display = ''; }
-  else { badge.style.display = 'none'; }
-  renderLog(s.log);
-  applyTheme(s.theme);
-  renderPreview(s);
-  renderCards(s);
-  if (s.phase === 'idle' || s.phase === 'ready') {
-    if (polling) { clearInterval(polling); polling = null; }
-    document.getElementById('btn-gen').disabled = false;
-    const canExport = s.phase === 'ready' && s.slides.length > 0;
-    setExportButtons(!canExport);
-    document.getElementById('btn-refine').disabled = !canExport;
-    if (s.phase === 'ready' && !s.slides.length) { /* 保留 */ }
-    if (s.phase === 'idle' && s.log.length && s.slides.length === 0) {
-      const last = s.log[s.log.length - 1];
-      if (last.msg.startsWith('生成中断')) toast('生成失败：' + last.msg, 6000);
-    }
-  }
-}
-
-function renderPreview(s) {
-  const el = document.getElementById('deck-preview');
-  const sig = (s.phase === 'ready' && s.html_path) ? s.html_path : '';
-  if (el.dataset.sig === sig) return;
-  el.dataset.sig = sig;
-  // sandbox=allow-scripts：LLM 产物的翻页脚本可运行，但同源 API 调用被禁止（审计 M2）
-  if (!sig) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="deck-bar"><b>🎨 AI 设计稿（主产物）</b>
-    <button class="btn-outline btn-sm" onclick="window.open('${s.html_path}','_blank')">新标签打开</button>
-    <button class="btn-outline btn-sm" onclick="doRedesign()">重新设计</button></div>
-    <iframe class="deck-frame" src="${s.html_path}?t=${Date.now()}" sandbox="allow-scripts"></iframe>`;
-}
-
-async function doRedesign() {
-  const r = await fetch('/api/redesign', {method:'POST'});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error); return; }
-  toast('AI 正在重新设计 HTML…');
-  if (polling) clearInterval(polling);
-  polling = setInterval(refresh, 1000);
-  refresh();
-}
-
-async function doRefine() {
-  const instruction = document.getElementById('instruction').value.trim();
-  if (!instruction) { toast('请输入修改指令'); return; }
-  const r = await fetch('/api/refine', {method:'POST', headers:{'Content-Type':'application/json'},
-                                         body: JSON.stringify({instruction})});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error); return; }
-  document.getElementById('btn-refine').disabled = true;
-  document.getElementById('btn-gen').disabled = true;
-  setExportButtons(true);
-  document.getElementById('instruction').value = '';
-  toast('正在按指令修改…');
-  if (polling) clearInterval(polling);
-  polling = setInterval(refresh, 1000);
-  refresh();
-}
-
-function renderSteps(phase) {
-  const m = {'outline': ['active','','',''], 'images': ['done','active','',''],
-             'designing': ['done','done','active',''], 'refining': ['done','done','active',''],
-             'ready': ['done','done','done','done']};
-  const v = m[phase] || ['','','',''];
-  ['step-outline','step-images','step-design','step-ready'].forEach((id, i) => {
-    document.getElementById(id).className = 'step ' + v[i];
-  });
-}
-
-function renderLog(log) {
-  const el = document.getElementById('log');
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-  el.innerHTML = log.map(l => `<div>[${l.time}] ${esc(l.msg)}</div>`).join('');
-  if (atBottom) el.scrollTop = el.scrollHeight;
-}
-
-function renderCards(s) {
-  const wrap = document.getElementById('cards');
-  const sig = s.phase + '|' + s.slides.map(x => x.type + x.title + x.imageStatus + (x.image||'') + x.points.join('§') + JSON.stringify(x.chart||'')).join('¶');
-  if (wrap.dataset.sig === sig) return;
-  wrap.dataset.sig = sig;
-
-  if (document.activeElement && wrap.contains(document.activeElement) &&
-      !['BUTTON','INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
-
-  wrap.innerHTML = s.slides.map((sl, i) => {
-    const stype = sl.type || 'content';
-    const label = TYPE_LABEL[stype] || '图文';
-    let imgHtml;
-    if (sl.imageStatus === 'generating') imgHtml = '<div class="spinner"></div>';
-    else if (sl.image) imgHtml = `<img src="${sl.image}" alt="页${i+1}">`;
-    else imgHtml = `<div class="placeholder">${sl.imageStatus === 'failed' ? '（图片生成失败）' : '（无图）'}</div>`;
-
-    const imgTools = stype === 'content' ? `
-      <div class="img-tools">
-        <input id="prompt-${i}" placeholder="自定义图片描述（可留空）" value="${esc(sl.image_prompt)}">
-        <button class="btn-outline btn-sm" onclick="regenImage(${i})" ${sl.imageStatus==='generating'?'disabled':''}>换一张图</button>
-      </div>` : '';
-
-    let body;
-    if (stype === 'cover') {
-      body = `<div class="card-body cover"><input class="title" id="title-${i}" value="${esc(sl.title)}">${imgHtml}</div>`;
-    } else if (stype === 'toc') {
-      body = `<div class="card-body"><input class="title" id="title-${i}" value="${esc(sl.title)}">
-        <textarea id="points-${i}" placeholder="每行一个章节标题">${esc(sl.points.join('\n'))}</textarea></div>`;
-    } else if (stype === 'section') {
-      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">
-        <div class="lead">${esc(sl.points[0] || '')}</div></div>`;
-    } else if (stype === 'data') {
-      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">${chartHtml(sl.chart)}</div>`;
-    } else if (stype === 'timeline') {
-      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">${timelineHtml(sl.points)}</div>`;
-    } else if (stype === 'compare') {
-      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}">${compareHtml(sl.points)}</div>`;
-    } else if (stype === 'end') {
-      body = `<div class="card-body center"><input class="title" id="title-${i}" value="${esc(sl.title)}"></div>`;
-    } else {
-      const noImg = ['cards', 'columns', 'center'].includes(sl.layout);
-      const ptsPh = '每行一个要点（标题：描述）';
-      const textCol = `<div class="col-text">
-        <input class="title" id="title-${i}" value="${esc(sl.title)}">
-        <textarea id="points-${i}" placeholder="${ptsPh}">${esc(sl.points.join('\n'))}</textarea></div>`;
-      body = noImg
-        ? `<div class="card-body">${textCol}</div>`
-        : `<div class="card-body">${textCol}<div class="col-img"><div class="img-area">${imgHtml}</div>${imgTools}</div></div>`;
-    }
-    const layoutBadge = LAYOUT_LABEL[sl.layout] ? ` <span class="type-badge">${LAYOUT_LABEL[sl.layout]}</span>` : '';
-    return `<div class="card themed">
-      <div class="card-head">页 ${i + 1} · <span class="type-badge">${label}</span>${layoutBadge} ${esc(sl.title)}${reviewBadge(sl)}
-        <button class="btn-outline btn-sm" onclick="saveText(${i})">保存文字</button></div>
-      ${body}
-    </div>`;
-  }).join('');
-}
-
-function reviewBadge(sl) {
-  const rv = sl.review || {};
-  if (rv.tries > 0 && rv.ok) return '<span class="review-badge regenerated">已重生</span>';
-  if (rv.tries >= 2 && !rv.ok) return '<span class="review-badge fail">未契合</span>';
-  if (sl.imageStatus === 'done') return '<span class="review-badge ok">✓ 契合</span>';
-  return '';
-}
-
-async function saveText(i) {
-  const title = document.getElementById('title-' + i).value;
-  const ptsEl = document.getElementById('points-' + i);
-  const points = ptsEl ? ptsEl.value.split('\n').map(x => x.trim()).filter(Boolean) : [];
-  const r = await fetch(`/api/slide/${i}/text`, {method:'POST', headers:{'Content-Type':'application/json'},
-                                                  body: JSON.stringify({title, points})});
-  if (r.ok) toast(`页 ${i + 1} 文字已保存`);
-  else toast((await r.json()).error);
-}
-
-async function regenImage(i) {
-  const prompt = document.getElementById('prompt-' + i).value;
-  const r = await fetch(`/api/slide/${i}/image`, {method:'POST', headers:{'Content-Type':'application/json'},
-                                                   body: JSON.stringify({prompt})});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error); return; }
-  toast(`页 ${i + 1} 正在重新生图…`);
-  if (polling) clearInterval(polling);
-  polling = setInterval(refresh, 1000);
-}
-
-async function doExport() {
-  const r = await fetch('/api/export', {method:'POST'});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error); return; }
-  toast('已导出：' + d.path, 8000);
-}
-
-async function doExportHtml() {
-  const r = await fetch('/api/export_html', {method:'POST'});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error); return; }
-  toast('已导出 HTML：' + d.path, 8000);
-  window.open(d.path.replace(/\\/g, '/'), '_blank');
+  const {ok, data} = await post('/api/generate', {topic});
+  if (!ok) { toast(data.error); return; }
+  $('btn-gen').disabled = true;
+  setExports(true);
+  startPolling();
 }
 
 async function doImport(input) {
@@ -438,31 +405,249 @@ async function doImport(input) {
   const fd = new FormData();
   fd.append('file', file);
   toast('正在解析文档…');
-  const r = await fetch('/api/import_file', {method:'POST', body: fd});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error || '导入失败'); return; }
+  const r = await fetch('/api/import_file', {method: 'POST', body: fd});
+  const data = await r.json();
+  if (!r.ok) { toast(data.error || '导入失败'); return; }
   input.value = '';
-  toast('正在从文档生成 PPT…');
-  document.getElementById('btn-gen').disabled = true;
-  setExportButtons(true);
-  if (polling) clearInterval(polling);
-  polling = setInterval(refresh, 1000);
-  refresh();
+  toast('正在从文档生成演示…');
+  $('btn-gen').disabled = true;
+  setExports(true);
+  startPolling();
 }
 
-async function doExportTxt() {
-  const r = await fetch('/api/export_txt', {method:'POST'});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error); return; }
-  toast('已导出大纲：' + d.path, 8000);
+async function doRefine() {
+  const instruction = $('instruction').value.trim();
+  if (!instruction) { toast('请输入修改指令'); return; }
+  const {ok, data} = await post('/api/refine', {instruction});
+  if (!ok) { toast(data.error); return; }
+  $('btn-refine').disabled = true;
+  $('btn-gen').disabled = true;
+  setExports(true);
+  $('instruction').value = '';
+  toast('正在按指令修改…');
+  startPolling();
 }
 
-async function doExportPdf() {
-  const r = await fetch('/api/export_pdf', {method:'POST'});
-  const d = await r.json();
-  if (!r.ok) { toast(d.error || 'PDF 导出失败', 5000); return; }
-  toast('已导出 PDF：' + d.path, 8000);
+async function doRedesign() {
+  const {ok, data} = await post('/api/redesign');
+  if (!ok) { toast(data.error); return; }
+  toast('AI 正在重新设计…');
+  startPolling();
 }
+
+async function saveText(i) {
+  const title = $('title-' + i).value;
+  const ptsEl = $('points-' + i);
+  const points = ptsEl ? ptsEl.value.split('\n').map(x => x.trim()).filter(Boolean) : [];
+  const {ok, data} = await post(`/api/slide/${i}/text`, {title, points});
+  toast(ok ? `第 ${i + 1} 页文字已保存` : data.error);
+}
+
+async function regenImage(i) {
+  const prompt = $('prompt-' + i).value;
+  const {ok, data} = await post(`/api/slide/${i}/image`, {prompt});
+  if (!ok) { toast(data.error); return; }
+  toast(`第 ${i + 1} 页正在重新生图…`);
+  startPolling();
+}
+
+async function doExport()     { const {ok, data} = await post('/api/export');      toast(ok ? '已导出：' + data.path : data.error, 8000); }
+async function doExportTxt()  { const {ok, data} = await post('/api/export_txt');  toast(ok ? '已导出大纲：' + data.path : data.error, 8000); }
+async function doExportPdf()  { const {ok, data} = await post('/api/export_pdf');  toast(ok ? '已导出 PDF：' + data.path : (data.error || 'PDF 导出失败'), 6000); }
+async function doExportHtml() {
+  const {ok, data} = await post('/api/export_html');
+  if (!ok) { toast(data.error); return; }
+  toast('已导出 HTML：' + data.path, 8000);
+}
+async function refresh() {
+  const r = await fetch('/api/status');
+  const s = await r.json();
+  const working = !['idle', 'ready'].includes(s.phase);
+
+  $('progress').hidden = (s.phase === 'idle' && !s.log.length);
+  $('hero').hidden = working || s.slides.length > 0;
+  $('refine-bar').hidden = !s.slides.length;
+
+  renderStages(s.phase);
+  renderStyleBadge(s.style_name);
+  renderLog(s.log);
+  applyDeckTheme(s.theme);
+  renderPreview(s);
+  renderCards(s);
+
+  if (!working) {
+    if (polling) { clearInterval(polling); polling = null; }
+    $('btn-gen').disabled = false;
+    const canExport = s.phase === 'ready' && s.slides.length > 0;
+    setExports(!canExport);
+    $('btn-refine').disabled = !canExport;
+    if (canExport) loadDecks();
+    if (s.phase === 'idle' && s.log.length && !s.slides.length) {
+      const last = s.log[s.log.length - 1];
+      if (last.msg.startsWith('生成中断')) toast('生成失败：' + last.msg, 6000);
+    }
+  }
+}
+
+function renderStages(phase) {
+  const map = {
+    outline:   ['active', '', '', ''],
+    images:    ['done', 'active', '', ''],
+    designing: ['done', 'done', 'active', ''],
+    refining:  ['done', 'done', 'active', ''],
+    ready:     ['done', 'done', 'done', 'done'],
+  };
+  const v = map[phase] || ['', '', '', ''];
+  ['st-outline', 'st-images', 'st-design', 'st-ready'].forEach((id, i) => {
+    $(id).className = 'stage ' + v[i];
+  });
+  $('bar').style.width = (PHASE_PCT[phase] ?? 0) + '%';
+}
+
+function renderStyleBadge(name) {
+  const b = $('style-badge');
+  if (!name) { b.style.display = 'none'; return; }
+  b.textContent = 'AI 风格 · ' + name;
+  b.style.display = 'inline-flex';
+}
+
+function renderLog(log) {
+  const el = $('log');
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  el.innerHTML = log.map(l => `<div><b>${l.time}</b>${esc(l.msg)}</div>`).join('');
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+async function loadDecks() {
+  try {
+    const r = await fetch('/api/decks');
+    const {decks} = await r.json();
+    $('deck-list').innerHTML = decks.map(d =>
+      `<button class="side-item" onclick="window.open('${escUrl(d.url)}','_blank')" title="${esc(d.title)}">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg>
+         <span class="txt">${esc(d.title)}</span><span class="meta">${esc(d.when)}</span>
+       </button>`).join('');
+  } catch (e) { /* 历史列表失败不影响主流程 */ }
+}
+
+function renderPreview(s) {
+  const el = $('deck-preview');
+  const sig = (s.phase === 'ready' && s.html_path) ? s.html_path : '';
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
+  if (!sig) { el.innerHTML = ''; return; }
+  // sandbox=allow-scripts：LLM 产物的翻页脚本可运行，但同源 API 调用被禁止（审计 M2）
+  el.innerHTML = `
+    <div class="sec-head">
+      <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3l1.9 5.8L20 10l-5.2 3 1.3 6-4.1-3.3L7.9 19l1.3-6L4 10l6.1-1.2z"/></svg>AI 设计稿</h3>
+      <span class="sp"></span>
+      <button class="btn btn-ghost btn-sm" onclick="window.open('${escUrl(s.html_path)}','_blank')">全屏演示</button>
+      <button class="btn btn-ghost btn-sm" onclick="doRedesign()">重新设计</button>
+    </div>
+    <iframe class="deck-frame" src="${escUrl(s.html_path)}?t=${Date.now()}" sandbox="allow-scripts"></iframe>`;
+}
+function vizChart(chart) {
+  const labels = chart?.labels || [];
+  const values = (chart?.values || []).map(v => Number(v) || 0);
+  const mx = Math.max(...values, 1);
+  return '<div class="viz">' + labels.map((l, i) =>
+    `<div class="bar-row"><span class="bar-label">${esc(l)}</span>
+       <span class="bar-track"><i style="width:${values[i] / mx * 100}%"></i></span>
+       <span class="bar-val">${values[i]}</span></div>`).join('') + '</div>';
+}
+
+function vizTimeline(points) {
+  return '<div class="tl">' + points.map(p =>
+    `<div class="tl-node"><div class="tl-dot"></div><span>${esc(p)}</span></div>`).join('') + '</div>';
+}
+
+function vizCompare(points) {
+  const mid = Math.ceil(points.length / 2);
+  const col = items => '<div class="cmp-col">' +
+    items.map(p => `<div>${esc(p)}</div>`).join('') + '</div>';
+  return '<div class="cmp">' + col(points.slice(0, mid)) + col(points.slice(mid)) + '</div>';
+}
+
+function checkBadge(sl) {
+  const rv = sl.review || {};
+  if (rv.tries > 0 && rv.ok) return '<span class="chk re">已重生</span>';
+  if (rv.tries >= 2 && !rv.ok) return '<span class="chk no">未契合</span>';
+  if (sl.imageStatus === 'done') return '<span class="chk ok">契合</span>';
+  return '';
+}
+
+function renderCards(s) {
+  const wrap = $('cards');
+  const sig = s.phase + '|' + s.slides.map(x =>
+    x.type + x.title + x.imageStatus + (x.image || '') + x.points.join('§') +
+    JSON.stringify(x.chart || '')).join('¶');
+  if (wrap.dataset.sig === sig) return;
+  // 正在输入时不重建 DOM，避免丢失未保存的编辑
+  if (document.activeElement && wrap.contains(document.activeElement) &&
+      ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+  wrap.dataset.sig = sig;
+
+  wrap.innerHTML = s.slides.map((sl, i) => {
+    const stype = sl.type || 'content';
+    const label = TYPE_LABEL[stype] || '图文';
+    const layoutTag = LAYOUT_LABEL[sl.layout]
+      ? `<span class="tag sub">${LAYOUT_LABEL[sl.layout]}</span>` : '';
+
+    let img;
+    if (sl.imageStatus === 'generating') img = '<div class="loader"></div>';
+    else if (sl.image) img = `<img src="${escUrl(sl.image)}" alt="第 ${i + 1} 页配图">`;
+    else img = `<div class="ph">${sl.imageStatus === 'failed' ? '配图生成失败' : '此页无配图'}</div>`;
+
+    const imgTools = stype === 'content' ? `
+      <div class="img-tools">
+        <input id="prompt-${i}" placeholder="自定义画面描述" value="${esc(sl.image_prompt)}">
+        <button class="btn btn-ghost btn-sm" onclick="regenImage(${i})"
+          ${sl.imageStatus === 'generating' ? 'disabled' : ''}>换图</button>
+      </div>` : '';
+
+    const titleInput = `<input class="title" id="title-${i}" value="${esc(sl.title)}">`;
+    const ptsArea = ph => `<textarea id="points-${i}" placeholder="${ph}">${esc(sl.points.join('\n'))}</textarea>`;
+
+    let body;
+    if (stype === 'cover') {
+      body = `<div class="card-body center">${titleInput}${img}</div>`;
+    } else if (stype === 'toc') {
+      body = `<div class="card-body"><div class="col-text">${titleInput}${ptsArea('每行一个章节标题')}</div></div>`;
+    } else if (stype === 'section') {
+      body = `<div class="card-body center">${titleInput}<div class="lead">${esc(sl.points[0] || '')}</div></div>`;
+    } else if (stype === 'data') {
+      body = `<div class="card-body center">${titleInput}${vizChart(sl.chart)}</div>`;
+    } else if (stype === 'timeline') {
+      body = `<div class="card-body center">${titleInput}${vizTimeline(sl.points)}</div>`;
+    } else if (stype === 'compare') {
+      body = `<div class="card-body center">${titleInput}${vizCompare(sl.points)}</div>`;
+    } else if (stype === 'end') {
+      body = `<div class="card-body center">${titleInput}</div>`;
+    } else {
+      const textCol = `<div class="col-text">${titleInput}${ptsArea('每行一个要点（标题：描述）')}</div>`;
+      const noImg = ['cards', 'columns', 'center'].includes(sl.layout);
+      body = noImg
+        ? `<div class="card-body">${textCol}</div>`
+        : `<div class="card-body">${textCol}
+             <div class="col-img"><div class="img-area">${img}</div>${imgTools}</div></div>`;
+    }
+
+    return `<article class="card">
+      <div class="card-head">
+        <span class="no">${String(i + 1).padStart(2, '0')}</span>
+        <span class="tag">${label}</span>${layoutTag}
+        <span class="ttl">${esc(sl.title)}</span>
+        ${checkBadge(sl)}
+        <span class="sp"></span>
+        <button class="btn btn-ghost btn-sm" onclick="saveText(${i})">保存</button>
+      </div>
+      ${body}
+    </article>`;
+  }).join('');
+}
+
+refresh();
+loadDecks();
 </script>
 </body>
 </html>

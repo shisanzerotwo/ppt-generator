@@ -50,6 +50,30 @@ PROMPT_TEMPLATE = """你是一位顶级幻灯片视觉设计师。根据下面�
 
 MAX_TOKENS = 16000
 
+# 打印分页兜底：prompt 里要求过，但实测 LLM 常漏，靠代码补更可靠
+PRINT_CSS = """
+<style>
+@media print {
+  @page { size: 1280px 720px; margin: 0; }
+  html, body { width: 1280px; }
+  .slide { page-break-after: always; break-after: page; min-height: 720px; }
+  .slide:last-child { page-break-after: auto; break-after: auto; }
+}
+</style>"""
+
+
+def _ensure_print_css(html: str) -> str:
+    """LLM 漏写打印分页规则时补上，保证浏览器能正确打印成 PDF（每页一张）。"""
+    if "@media print" in html:
+        return html
+    idx = html.rfind("</head>")
+    if idx != -1:
+        return html[:idx] + PRINT_CSS + "\n" + html[idx:]
+    idx = html.rfind("</body>")
+    if idx != -1:
+        return html[:idx] + PRINT_CSS + "\n" + html[idx:]
+    return html
+
 
 def _call_llm(prompt: str) -> str:
     # 设计任务输出量大（实测 129~200s），不复用 outline 的 60s 短超时客户端（审计 M1）
@@ -113,7 +137,7 @@ def generate_html_deck(topic: str, slides: list[dict], image_map: dict[int, str]
     for _ in range(2):
         text = _call_llm(prompt)
         try:
-            return _extract_html(text)
+            return _ensure_print_css(_extract_html(text))
         except ValueError as e:
             last_err = e
     raise RuntimeError(f"HTML 生成失败（已重试 1 次）: {last_err}")
