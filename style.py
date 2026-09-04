@@ -4,7 +4,7 @@
 正文不超 3 色，系统无衬线字体，整套统一不乱换）。
 """
 
-import json
+
 import os
 import re
 
@@ -86,7 +86,7 @@ def _call_llm(prompt: str) -> str:
     resp = _client().chat.completions.create(
         model=os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=200,
+        max_tokens=500,
         temperature=0.2,
     )
     return resp.choices[0].message.content or ""
@@ -101,18 +101,22 @@ def build_prompt(topic: str, slides: list[dict]) -> str:
 
 
 def decide_style(topic: str, slides: list[dict]) -> dict:
-    """AI 选风格；失败或输出非法时回退 fresh-light，绝不阻断主流程。"""
+    """AI 选风格；失败或输出非法时回退 fresh-light，绝不阻断主流程。
+
+    解析容错：LLM 输出可能带 ```json 围栏或被截断，直接正则抠 key 字段。
+    """
     fallback = dict(STYLE_LIBRARY["fresh-light"], key="fresh-light", reason="")
     try:
         text = _call_llm(build_prompt(topic, slides))
-        m = re.search(r"\{[^{}]*\}", text, re.S)
+        m = re.search(r'"key"\s*:\s*"([^"]+)"', text)
         if not m:
             return fallback
-        data = json.loads(m.group(0))
-        key = data.get("key")
+        key = m.group(1)
         if key not in STYLE_LIBRARY:
             return fallback
-        return dict(STYLE_LIBRARY[key], key=key, reason=str(data.get("reason", "")))
+        rm = re.search(r'"reason"\s*:\s*"([^"]*)"', text)
+        reason = rm.group(1) if rm else ""
+        return dict(STYLE_LIBRARY[key], key=key, reason=reason)
     except Exception:
         return fallback
 
