@@ -3,3 +3,5 @@ output/
 __pycache__/
 .venv/
 server.log
+
+server_test.log
