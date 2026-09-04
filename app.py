@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import time
+from urllib.parse import quote
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -82,7 +83,8 @@ def _design_and_save():
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(doc)
         with lock:
-            state["html_path"] = f"/decks/{os.path.basename(out_path)}"
+            # basename 做 URL 编码：主题含引号/反引号等字符时不会被前端 onclick 拼接执行（审计 C1）
+            state["html_path"] = f"/decks/{quote(os.path.basename(out_path))}"
         _log(f"HTML 设计完成：{os.path.basename(out_path)}")
         return True
     except Exception as e:

@@ -279,11 +279,12 @@ function renderPreview(s) {
   const sig = (s.phase === 'ready' && s.html_path) ? s.html_path : '';
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
+  // sandbox=allow-scripts：LLM 产物的翻页脚本可运行，但同源 API 调用被禁止（审计 M2）
   if (!sig) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="deck-bar"><b>🎨 AI 设计稿（主产物）</b>
     <button class="btn-outline btn-sm" onclick="window.open('${s.html_path}','_blank')">新标签打开</button>
     <button class="btn-outline btn-sm" onclick="doRedesign()">重新设计</button></div>
-    <iframe class="deck-frame" src="${s.html_path}?t=${Date.now()}"></iframe>`;
+    <iframe class="deck-frame" src="${s.html_path}?t=${Date.now()}" sandbox="allow-scripts"></iframe>`;
 }
 
 async function doRedesign() {

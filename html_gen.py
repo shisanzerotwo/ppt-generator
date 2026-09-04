@@ -52,8 +52,16 @@ MAX_TOKENS = 16000
 
 
 def _call_llm(prompt: str) -> str:
-    client, model = outline._client()
-    model = os.getenv("ZHIPUAI_DESIGN_MODEL", model)
+    # 设计任务输出量大（实测 129~200s），不复用 outline 的 60s 短超时客户端（审计 M1）
+    api_key = os.getenv("ZHIPUAI_API_KEY")
+    if not api_key or api_key == "your-key-here":
+        raise RuntimeError("未配置 ZHIPUAI_API_KEY")
+    client = outline.ZhipuAI(
+        api_key=api_key,
+        base_url=os.getenv("ZHIPUAI_BASE_URL") or None,
+        timeout=300.0,
+    )
+    model = os.getenv("ZHIPUAI_DESIGN_MODEL") or os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash"
     resp = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],

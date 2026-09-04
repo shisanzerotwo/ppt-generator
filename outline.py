@@ -151,7 +151,7 @@ def _self_critique(client, model, label, slides) -> str:
     cur = json.dumps([{"type": s["type"], "title": s["title"]} for s in slides], ensure_ascii=False)
     prompt = (
         f"主题「{label}」的 PPT 大纲如下（只列 type 和 title）：\n{cur}\n\n"
-        "判断这份大纲结构是否完整合理。重点看：是否缺封面/目录/总结页、页数是否在 8~12 之间、"
+        "判断这份大纲结构是否完整合理。重点看：是否缺封面/目录/总结页、页数是否在 8~10 之间、"
         "章节划分是否清晰。只输出两行：\n第一行：没问题 或 有问题\n第二行：若有问题，一句话描述需改进什么"
     )
     resp = client.chat.completions.create(
