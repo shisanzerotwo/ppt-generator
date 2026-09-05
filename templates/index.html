@@ -266,6 +266,39 @@ a.side-item:hover { color:var(--fg); }
 .modal:fullscreen .modal-frame { height:100vh; border-radius:0; border:none; }
 .modal:fullscreen .modal-body iframe { height:100%; }
 .img-area img { cursor:zoom-in; }
+/* ===== AI 协作抽屉（右侧可折叠，默认收起，不挤占主区） ===== */
+.aidrawer { position:fixed; top:0; right:0; height:100vh; width:min(360px, 92vw);
+            background:var(--surface); border-left:1px solid var(--border);
+            box-shadow:-12px 0 34px rgba(0,0,0,.10); z-index:60;
+            display:flex; flex-direction:column;
+            transform:translateX(100%); transition:transform .2s cubic-bezier(.4,0,.2,1); }
+.aidrawer.open { transform:translateX(0); }
+.ai-head { display:flex; align-items:center; gap:8px; padding:12px 14px;
+           border-bottom:1px solid var(--border); font-size:14px; font-weight:600; }
+.ai-head .sp { flex:1; }
+.ai-ctx { margin:12px 14px 0; padding:8px 10px; border-radius:var(--r);
+          background:var(--accent-soft); border:1px solid var(--accent);
+          font-size:12px; color:var(--fg); display:none; align-items:flex-start; gap:8px; }
+.ai-ctx.on { display:flex; }
+.ai-ctx .txt { flex:1; min-width:0; word-break:break-all; }
+.ai-ctx b { color:var(--accent); }
+.ai-msgs { flex:1; min-height:0; overflow-y:auto; padding:14px; display:flex;
+           flex-direction:column; gap:10px; }
+.bub { max-width:88%; padding:8px 12px; border-radius:12px; font-size:13px; line-height:1.65; }
+.bub.me { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+.bub.ai { align-self:flex-start; background:var(--raised); border:1px solid var(--border);
+          border-bottom-left-radius:4px; white-space:pre-wrap; word-break:break-word; }
+.bub.sys { align-self:center; background:none; color:var(--faint); font-size:12px; }
+.ai-input { border-top:1px solid var(--border); padding:12px 14px; display:flex;
+            flex-direction:column; gap:8px; }
+.ai-input textarea { width:100%; min-height:64px; resize:vertical; padding:8px 10px;
+                     border:1px solid var(--border); border-radius:var(--r); background:var(--bg);
+                     outline:none; font-size:13px; line-height:1.6; }
+.ai-input textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.ai-input .row { display:flex; align-items:center; gap:8px; }
+.ai-hint { font-size:11.5px; color:var(--faint); }
+.ai-hint kbd { font-family:var(--mono); border:1px solid var(--border); border-radius:4px;
+               padding:0 4px; background:var(--bg); }
 </style>
 </head>
 <body>
@@ -286,6 +319,10 @@ a.side-item:hover { color:var(--fg); }
       导入文档
     </button>
     <input type="file" id="file-input" accept=".md,.txt,.docx" hidden onchange="doImport(this)">
+    <button class="side-item" id="btn-ai" onclick="toggleAi()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5.2 3 1.3 6-4.1-3.3L7.9 19l1.3-6L4 10l6.1-1.2z"/></svg>
+      AI 协作
+    </button>
   </div>
   <details class="side-grp" open>
     <summary class="side-label">历史设计稿</summary>
@@ -400,6 +437,31 @@ a.side-item:hover { color:var(--fg); }
     <div class="modal-body" id="viewer-body"></div>
   </div>
 </dialog>
+<aside class="aidrawer" id="aidrawer" aria-label="AI 协作面板">
+  <div class="ai-head">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.8L20 10l-5.2 3 1.3 6-4.1-3.3L7.9 19l1.3-6L4 10l6.1-1.2z"/></svg>
+    AI 协作<span class="sp"></span>
+    <button class="btn btn-ghost btn-sm" onclick="toggleAi()" aria-label="收起 AI 面板">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="ai-ctx" id="ai-ctx">
+    <span class="txt" id="ai-ctx-txt"></span>
+    <button class="btn btn-ghost btn-sm" onclick="clearAiCtx()" aria-label="取消圈选范围">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <div class="ai-msgs" id="ai-msgs"></div>
+  <div class="ai-input">
+    <textarea id="ai-text" placeholder="说明要改什么，例如：这条要点太长了，缩到 12 个字"
+              onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();sendAi();}"></textarea>
+    <div class="row">
+      <span class="ai-hint"><kbd>Ctrl</kbd>+<kbd>J</kbd> 呼出 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 发送</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-primary btn-sm" id="ai-send" onclick="sendAi()">发送</button>
+    </div>
+  </div>
+</aside>
 <div id="toast"></div>
 <script>
 let polling = null;
@@ -710,6 +772,81 @@ $('viewer').addEventListener('close', () => {
   }
 });
 
+// ===== AI 协作抽屉：圈选某页 / 某条要点，只让 AI 改那一部分 =====
+let aiTarget = null;   // {slide, quote?}；quote 为空表示整页
+
+function toggleAi(open) {
+  const d = $('aidrawer');
+  const next = open === undefined ? !d.classList.contains('open') : open;
+  d.classList.toggle('open', next);
+  if (next) $('ai-text').focus();
+}
+
+function renderAiCtx() {
+  const box = $('ai-ctx');
+  if (!aiTarget) { box.classList.remove('on'); return; }
+  box.classList.add('on');
+  const label = `第 ${aiTarget.slide + 1} 页`;
+  $('ai-ctx-txt').innerHTML = aiTarget.quote
+    ? `只改写 <b>${esc(label)}</b> 中选中的「${esc(aiTarget.quote)}」`
+    : `改写整个 <b>${esc(label)}</b>`;
+}
+
+function setAiCtx(slide, quote) {
+  aiTarget = {slide, quote: quote || undefined};
+  renderAiCtx();
+  toggleAi(true);
+}
+function clearAiCtx() { aiTarget = null; renderAiCtx(); }
+
+function aiBubble(cls, text) {
+  const d = document.createElement('div');
+  d.className = 'bub ' + cls;
+  d.textContent = text;
+  $('ai-msgs').appendChild(d);
+  $('ai-msgs').scrollTop = $('ai-msgs').scrollHeight;
+  return d;
+}
+
+async function sendAi() {
+  const instruction = $('ai-text').value.trim();
+  if (!instruction) { toast('请说明要怎么改'); return; }
+  const body = {instruction};
+  if (aiTarget) body.target = aiTarget;
+  const scope = aiTarget
+    ? (aiTarget.quote ? `第${aiTarget.slide + 1}页·选中` : `第${aiTarget.slide + 1}页`)
+    : '整篇';
+  aiBubble('me', `[${scope}] ${instruction}`);
+  $('ai-text').value = '';
+  $('ai-send').disabled = true;
+  const busy = aiBubble('ai', 'AI 正在改写…');
+  const {ok, data} = await post('/api/refine', body);
+  busy.remove();
+  $('ai-send').disabled = false;
+  if (!ok) { aiBubble('sys', data.error || '改写失败'); return; }
+  aiBubble('sys', aiTarget
+    ? '已按圈定范围改写（其余页保持原样），正在重绘受影响部分'
+    : '已按指令改写整篇，正在重绘全部配图');
+  startPolling();   // 保留 aiTarget，便于连续追问「再短一点」
+}
+
+// 在卡片输入框里选中若干文字 → 自动作为改写范围（不弹面板，避免打断）
+function bindSelectionCapture() {
+  const handler = e => {
+    const el = e.target;
+    if (!['INPUT', 'TEXTAREA'].includes(el.tagName)) return;
+    if (!$('cards').contains(el)) return;
+    const {selectionStart: a, selectionEnd: b, value} = el;
+    if (typeof a !== 'number' || a === b) return;
+    const quote = value.slice(a, b).trim();
+    if (!quote) return;
+    aiTarget = {slide: Number(el.id.split('-').pop()), quote};
+    renderAiCtx();
+  };
+  $('cards').addEventListener('mouseup', handler);
+  $('cards').addEventListener('keyup', handler);
+}
+
 // ===== 阶段三：页面排序 / 增删（路线图 #7） =====
 let deckCount = 0;   // 由 refresh() 维护，供排序构造全排列
 
@@ -898,6 +1035,7 @@ function renderCards(s) {
         <button class="btn btn-ghost btn-sm" onclick="moveSlide(${i},-1)" ${i===0?'disabled':''} title="上移">↑</button>
         <button class="btn btn-ghost btn-sm" onclick="moveSlide(${i},1)" ${i===s.slides.length-1?'disabled':''} title="下移">↓</button>
         <button class="btn btn-ghost btn-sm" onclick="delSlide(${i})" title="删除此页">✕</button>
+        <button class="btn btn-ghost btn-sm" onclick="setAiCtx(${i})" title="只让 AI 改写这一页">AI 改这页</button>
         <button class="btn btn-ghost btn-sm" onclick="saveText(${i})">保存</button>
       </div>
       ${body}
@@ -909,6 +1047,11 @@ refresh();
 loadDecks();
 loadProjects();
 loadArtifacts();
+bindSelectionCapture();
+// Ctrl/⌘+J 呼出或收起 AI 协作面板
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); toggleAi(); }
+});
 </script>
 </body>
 </html>

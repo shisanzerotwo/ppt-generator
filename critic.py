@@ -1,6 +1,7 @@
 """方案 C2：视觉回看校验 + 对话式修改（提议者-审核者）。"""
 
 import base64
+import json
 import os
 
 from dotenv import load_dotenv
@@ -56,6 +57,82 @@ def review_image(title: str, points: list[str], image_path: str) -> dict:
     except Exception:
         # 校验失败降级为跳过，不中断主流程
         return {"ok": True, "reason": "", "advice": ""}
+
+
+def _ask(prompt: str) -> str:
+    """文本模型单轮调用（定点改写用）。"""
+    resp = _client().chat.completions.create(
+        model=TEXT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def revise_target(slides: list[dict], target: dict, instruction: str):
+    """只改写 target 指定的那一页 / 那一条要点，其余内容服务端强制原样保留。
+
+    target: {"slide": int, "quote": str|None}
+      - 有 quote：仅重写命中的那一条要点（不重生图）
+      - 无 quote：仅重写该页（title/points/image_prompt），image_prompt 变化时标记需重生图
+    返回 (new_slides, info)；info = {"level","slide","regen_image"}
+    """
+    i = target.get("slide")
+    if not isinstance(i, int) or i < 0 or i >= len(slides):
+        raise ValueError("目标页码不存在")
+    new_slides = [dict(s) for s in slides]
+    slide = new_slides[i]
+    quote = str(target.get("quote") or "").strip()
+
+    if quote:
+        pts = list(slide.get("points") or [])
+        idx = next((k for k, p in enumerate(pts) if quote in p), None)
+        if idx is None:
+            raise ValueError("该页未找到选中的文本")
+        text = _ask(
+            f"这是一页 PPT（标题：{slide.get('title', '')}）中的一条要点文本：\n{pts[idx]}\n\n"
+            f"用户要求：{instruction}\n\n"
+            "只输出改写后的这一条要点文本本身：不要解释、不要引号、不要列表符号、不要换行。"
+            "若原文是「标题：描述」格式（中文冒号分隔），改写后保持该格式。"
+        )
+        # 只要第一行、剥掉可能的包裹符号，防止 LLM 附加解释污染数据
+        new_point = text.splitlines()[0].strip() if text else ""
+        new_point = new_point.strip('"“”\'').strip()
+        if not new_point:
+            raise ValueError("AI 返回空内容")
+        pts[idx] = new_point
+        slide["points"] = pts
+        return new_slides, {"level": "point", "slide": i, "regen_image": False}
+
+    obj = _ask(
+        "你是一位 PPT 策划师。下面是一页 PPT 的内容（JSON 对象）：\n"
+        + json.dumps({k: slide.get(k) for k in ("type", "title", "points", "image_prompt", "chart")},
+                     ensure_ascii=False)
+        + f"\n\n用户要求：{instruction}\n\n"
+        "请只重写这一页，输出一个只包含该页对象的 JSON 数组（元素个数必须为 1）。"
+        "保持该页 type 与 chart 结构不变；若内容变化影响配图，同步更新 image_prompt"
+        "（该页本就不配图则保持空字符串）。不要输出任何解释文字。"
+    )
+    parsed = _extract_json(obj)
+    if not isinstance(parsed, list) or not parsed or not isinstance(parsed[0], dict):
+        raise ValueError("AI 未返回有效的单页内容")
+    normalized = _normalize(parsed)[:1]
+    if not normalized:
+        raise ValueError("AI 返回的页内容不合法")
+    rebuilt = normalized[0]
+    # _normalize 会给 content 页的空 image_prompt 塞兜底描述，故 LLM 原意须从 parsed 取，
+    # 否则「LLM 留空=不改配图」会被误判成新提示词，白白重生一张图
+    llm_prompt = str(parsed[0].get("image_prompt", "") or "")
+    old_prompt = str(slide.get("image_prompt") or "")
+    rebuilt["type"] = slide.get("type")          # 版式不允许被改写带偏
+    rebuilt["chart"] = rebuilt.get("chart") or slide.get("chart")
+    rebuilt["image_prompt"] = llm_prompt or old_prompt
+    new_slides[i] = rebuilt
+    return new_slides, {
+        "level": "slide", "slide": i,
+        # 有新描述且与原文不同即重生（含原本无图、改写后需配图的情况）
+        "regen_image": bool(llm_prompt) and llm_prompt != old_prompt,
+    }
 
 
 def refine_outline(slides: list[dict], instruction: str) -> list[dict]:

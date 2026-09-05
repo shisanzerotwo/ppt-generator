@@ -138,6 +138,52 @@ def _design_and_save():
         return False
 
 
+def _gen_images(indices=None):
+    """逐页生图 + 视觉校验闭环（提议者-审核者，不契合改词重生封顶 2 次）。
+
+    indices 为 None 时处理全部页；定点修改时只传被改动的页，避免整篇重生图。
+    """
+    with lock:
+        n = len(state["slides"])
+        todo = list(range(n)) if indices is None else [i for i in indices if 0 <= i < n]
+    for i in todo:
+        with lock:
+            s = dict(state["slides"][i])
+        prompt = s.get("image_prompt", "")
+        if not prompt:
+            with lock:
+                state["slides"][i]["imageStatus"] = "skipped"
+            _log(f"页 {i + 1}：无配图提示词，跳过")
+            continue
+        path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
+        review = {"ok": True, "reason": "", "tries": 0}
+        for attempt in range(3):
+            try:
+                image_gen.generate_image(prompt, path)
+                with lock:
+                    state["slides"][i]["image"] = f"/images/slide_{i}.png"
+                    state["slides"][i]["imageStatus"] = "done"
+                rv = critic.review_image(s.get("title", ""), s.get("points", []), path)
+                review = {"ok": rv["ok"], "reason": rv["reason"], "tries": attempt}
+                with lock:
+                    state["slides"][i]["review"] = review
+                if rv["ok"]:
+                    _log(f"页 {i + 1} 图片完成（校验契合）")
+                    break
+                if attempt < 2:
+                    if rv["advice"]:
+                        prompt = f"{s.get('image_prompt', prompt)}。注意：{rv['advice']}"
+                    _log(f"页 {i + 1} 校验不契合，重生（第 {attempt + 1} 次）：{rv['reason'][:40]}")
+                else:
+                    _log(f"页 {i + 1} 已重生 2 次仍未契合，保留当前图")
+            except Exception as e:
+                with lock:
+                    state["slides"][i]["imageStatus"] = "failed"
+                    state["slides"][i]["review"] = review
+                _log(f"页 {i + 1} 图片生成失败：{e}")
+                break
+
+
 def _generation_worker(content: str, from_text: bool = False):
     try:
         if from_text:
@@ -171,41 +217,7 @@ def _generation_worker(content: str, from_text: bool = False):
         _log("开始逐页生图")
         _phase("images")
 
-        for i, s in enumerate(slides):
-            prompt = s.get("image_prompt", "")
-            if not prompt:
-                with lock:
-                    state["slides"][i]["imageStatus"] = "skipped"
-                _log(f"页 {i + 1}：无配图提示词，跳过")
-                continue
-            path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
-            review = {"ok": True, "reason": "", "tries": 0}
-            # 提议者-审核者闭环：生图 → vision 校验 → 不契合则改提示词重生（封顶 2 次）
-            for attempt in range(3):
-                try:
-                    image_gen.generate_image(prompt, path)
-                    with lock:
-                        state["slides"][i]["image"] = f"/images/slide_{i}.png"
-                        state["slides"][i]["imageStatus"] = "done"
-                    rv = critic.review_image(s["title"], s.get("points", []), path)
-                    review = {"ok": rv["ok"], "reason": rv["reason"], "tries": attempt}
-                    with lock:
-                        state["slides"][i]["review"] = review
-                    if rv["ok"]:
-                        _log(f"页 {i + 1} 图片完成（校验契合）")
-                        break
-                    if attempt < 2:
-                        if rv["advice"]:
-                            prompt = f"{s.get('image_prompt', prompt)}。注意：{rv['advice']}"
-                        _log(f"页 {i + 1} 校验不契合，重生（第 {attempt + 1} 次）：{rv['reason'][:40]}")
-                    else:
-                        _log(f"页 {i + 1} 已重生 2 次仍未契合，保留当前图")
-                except Exception as e:
-                    with lock:
-                        state["slides"][i]["imageStatus"] = "failed"
-                        state["slides"][i]["review"] = review
-                    _log(f"页 {i + 1} 图片生成失败：{e}")
-                    break
+        _gen_images()
         _design_and_save()
         _log("全部页面就绪，可编辑后导出")
         _phase("ready")
@@ -324,14 +336,51 @@ def api_refine():
     instruction = (data.get("instruction") or "").strip()
     if not instruction:
         return jsonify({"error": "指令不能为空"}), 400
+    target = data.get("target")
+    if target is not None and not isinstance(target, dict):
+        return jsonify({"error": "target 需为对象 {slide, quote}"}), 400
     with lock:
-        if state["phase"] not in ("ready",):
+        if state["phase"] != "ready":
             return jsonify({"error": "请先生成 PPT，再进行对话修改"}), 409
         cur_slides = [dict(s) for s in state["slides"]]
+        # 输入类错误在 HTTP 层即时判掉：否则只进日志，前端会把失败当成改写成功
+        if target is not None:
+            idx = target.get("slide")
+            if isinstance(idx, bool) or not isinstance(idx, int) or not 0 <= idx < len(cur_slides):
+                return jsonify({"error": "目标页码不存在"}), 400
+            q = str(target.get("quote") or "").strip()
+            if q and not any(q in p for p in (cur_slides[idx].get("points") or [])):
+                return jsonify({"error": "该页未找到选中的文本，可能已被改动"}), 400
         state["phase"] = "refining"
 
     def worker():
         try:
+            if target is not None:
+                # 定点修改：只动被圈定的页/要点，其余页连图一起保留，不打回重做
+                _log(f"定点修改（第 {int(target.get('slide', -1)) + 1} 页）：{instruction}")
+                new_slides, info = critic.revise_target(cur_slides, target, instruction)
+                idx = info["slide"]
+                if info["level"] == "slide":
+                    # critic 只产出内容字段，状态字段（image/imageStatus/review）沿用原页
+                    content = {k: v for k, v in new_slides[idx].items()
+                               if k in ("title", "points", "image_prompt", "chart")}
+                    new_slides[idx] = {**cur_slides[idx], **content}
+                with lock:
+                    state["slides"] = new_slides
+                    if info["regen_image"]:
+                        state["slides"][idx].update(
+                            {"image": None, "imageStatus": "pending",
+                             "review": {"ok": True, "reason": "", "tries": 0}})
+                _log(f"已改写第 {idx + 1} 页的"
+                     + ("选中要点" if info["level"] == "point" else "整页内容"))
+                if info["regen_image"]:
+                    _phase("images")
+                    _gen_images([idx])
+                _design_and_save()
+                _log("定点修改完成，可导出")
+                _phase("ready")
+                return
+
             _log(f"对话修改：{instruction}")
             new_slides = critic.refine_outline(cur_slides, instruction)
             with lock:
@@ -344,47 +393,14 @@ def api_refine():
                     for s in new_slides
                 ]
             _log(f"对话修改完成，共 {len(new_slides)} 页，重新生图")
-            state["phase"] = "images"
-            # 重新走生图 + 视觉校验
-            for i, s in enumerate(new_slides):
-                prompt = s.get("image_prompt", "")
-                if not prompt:
-                    with lock:
-                        state["slides"][i]["imageStatus"] = "skipped"
-                    continue
-                path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
-                review = {"ok": True, "reason": "", "tries": 0}
-                for attempt in range(3):
-                    try:
-                        image_gen.generate_image(prompt, path)
-                        with lock:
-                            state["slides"][i]["image"] = f"/images/slide_{i}.png"
-                            state["slides"][i]["imageStatus"] = "done"
-                        rv = critic.review_image(s["title"], s.get("points", []), path)
-                        review = {"ok": rv["ok"], "reason": rv["reason"], "tries": attempt}
-                        with lock:
-                            state["slides"][i]["review"] = review
-                        if rv["ok"]:
-                            _log(f"页 {i + 1} 图片完成（校验契合）")
-                            break
-                        if attempt < 2:
-                            if rv["advice"]:
-                                prompt = f"{s.get('image_prompt', prompt)}。注意：{rv['advice']}"
-                            _log(f"页 {i + 1} 校验不契合，重生（第 {attempt + 1} 次）")
-                        else:
-                            _log(f"页 {i + 1} 已重生 2 次仍未契合，保留")
-                    except Exception as e:
-                        with lock:
-                            state["slides"][i]["imageStatus"] = "failed"
-                            state["slides"][i]["review"] = review
-                        _log(f"页 {i + 1} 图片生成失败：{e}")
-                        break
+            _phase("images")
+            _gen_images()
             _design_and_save()
             _log("对话修改完成，可导出")
-            state["phase"] = "ready"
+            _phase("ready")
         except Exception as e:
             _log(f"对话修改失败：{e}")
-            state["phase"] = "ready"
+            _phase("ready")
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"ok": True})
