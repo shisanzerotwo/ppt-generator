@@ -31,9 +31,12 @@ state = {
     "brand": None,    # 品牌模板 {name, color}，用户自定义后覆盖风格强调色（路线图 #6）
     "slides": [],     # {title, points, image_prompt, image, imageStatus}
     "html_path": None,  # AI 自主设计的 HTML 主产物（web 路径 /decks/xxx.html）
+    "await_step": None,  # 分步确认时正在等待放行的步骤："outline" / "design" / None
+    "stepwise": False,   # 是否在关键节点暂停等用户审阅（默认关，用户按需开启）
     "log": [],
 }
 lock = threading.Lock()
+resume_event = threading.Event()   # 分步确认的放行信号
 
 
 def _log(msg: str):
@@ -69,7 +72,9 @@ def _start_generation(content: str, from_text: bool) -> bool:
         # 注意：brand 不在此重置——它是用户级偏好，设过就跨生成生效，直到手动清除
         state["html_path"] = None
         state["log"] = []
+        state["await_step"] = None
         state["phase"] = "outline"
+    resume_event.clear()   # 防上一轮残留的放行信号让本次暂停被瞬间跳过
     os.makedirs(IMAGES_DIR, exist_ok=True)
     threading.Thread(target=_generation_worker, args=(content, from_text), daemon=True).start()
     return True
@@ -136,6 +141,31 @@ def _design_and_save():
     except Exception as e:
         _log(f"HTML 设计失败：{e}")
         return False
+
+
+REVIEW_TIMEOUT = 1800  # 分步确认最长等待，超时自动放行，避免 worker 永久挂起
+
+
+def _pause_gate(step: str, label: str):
+    """分步确认闸门：stepwise 开启时暂停 worker，等前端 /api/continue 放行。
+
+    超时或异常一律放行，保证生成流程不会因等待而卡死。
+    """
+    with lock:
+        if not state["stepwise"]:
+            return
+        state["phase"] = "review"
+        state["await_step"] = step
+    _log(f"{label}已完成，等你确认后再继续（可先用 AI 协作面板提修改意见）")
+    try:
+        resumed = resume_event.wait(timeout=REVIEW_TIMEOUT)
+        if not resumed:
+            _log("确认等待超时，自动继续")
+    finally:
+        resume_event.clear()
+        with lock:
+            state["await_step"] = None
+            state["phase"] = "images" if step == "outline" else "designing"
 
 
 def _gen_images(indices=None):
@@ -214,10 +244,12 @@ def _generation_worker(content: str, from_text: bool = False):
             state["style_name"] = chosen.get("name", "")
         reason = f"（{chosen['reason']}）" if chosen.get("reason") else ""
         _log(f"AI 选定风格：{chosen.get('name')} {reason}")
+        _pause_gate("outline", "大纲与风格")
         _log("开始逐页生图")
         _phase("images")
 
         _gen_images()
+        _pause_gate("design", "配图")
         _design_and_save()
         _log("全部页面就绪，可编辑后导出")
         _phase("ready")
@@ -239,6 +271,29 @@ def no_cache(resp):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/continue", methods=["POST"])
+def api_continue():
+    """放行分步确认。仅在 review 态有效，其余情况幂等返回 409。"""
+    with lock:
+        if state["phase"] != "review":
+            return jsonify({"error": "当前没有待确认的步骤"}), 409
+        step = state["await_step"]
+    if step:
+        resume_event.set()
+    return jsonify({"ok": True, "resumed": step})
+
+
+@app.route("/api/stepwise", methods=["POST"])
+def api_stepwise():
+    """开关分步确认（生成过程是否在关键节点暂停等你放行）。"""
+    data = request.get_json(force=True)
+    enabled = bool(data.get("enabled"))
+    with lock:
+        state["stepwise"] = enabled
+    _log(f"分步确认已{'开启' if enabled else '关闭'}")
+    return jsonify({"ok": True, "stepwise": enabled})
 
 
 @app.route("/api/generate", methods=["POST"])
@@ -304,6 +359,9 @@ def api_edit_text(i):
 def api_regen_image(i):
     data = request.get_json(force=True) if request.data else {}
     with lock:
+        # 主流程生图中不允许换图：两者会并发写同一个 slide_<i>.png（审计发现）
+        if state["phase"] not in ("ready", "review"):
+            return jsonify({"error": "正在生成中，请等待完成后再换图"}), 409
         if i < 0 or i >= len(state["slides"]):
             return jsonify({"error": "页码不存在"}), 404
         if state["slides"][i]["imageStatus"] == "generating":
@@ -340,6 +398,9 @@ def api_refine():
     if target is not None and not isinstance(target, dict):
         return jsonify({"error": "target 需为对象 {slide, quote}"}), 400
     with lock:
+        # 刻意不放行 review 态：refine 会另起 worker 重跑生图与设计，
+        # 而原 worker 仍阻塞在闸门上，醒来会重复一遍（竞态 + 白烧额度）。
+        # 暂停期请直接编辑卡片（saveText / 换图不触发流程），改完点「继续」即生效。
         if state["phase"] != "ready":
             return jsonify({"error": "请先生成 PPT，再进行对话修改"}), 409
         cur_slides = [dict(s) for s in state["slides"]]

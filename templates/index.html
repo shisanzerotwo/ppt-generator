@@ -120,6 +120,15 @@ a.side-item:hover { color:var(--fg); }
 /* ===== 主区容器 ===== */
 .main { flex:1; padding:28px; max-width:1180px; width:100%; margin:0 auto; }
 .panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); }
+.stepwise-toggle { display:flex; align-items:center; gap:5px; font-size:13px; color:var(--muted);
+                   white-space:nowrap; cursor:pointer; user-select:none; }
+.stepwise-toggle input { accent-color:var(--accent); cursor:pointer; }
+/* 分步确认审阅横幅 */
+.review-banner { display:flex; align-items:center; gap:10px; margin-top:12px; padding:11px 14px;
+                 border:1px solid var(--warn); border-radius:var(--r);
+                 background:color-mix(in srgb, var(--warn) 10%, transparent); font-size:13.5px; }
+.review-banner svg { color:var(--warn); }
+.rb-txt { font-weight:600; }
 /* ===== 首屏引导（未生成时）===== */
 .hero { display:flex; flex-direction:column; align-items:center; justify-content:center;
         text-align:center; padding:80px 24px; gap:14px; }
@@ -371,6 +380,9 @@ a.side-item:hover { color:var(--fg); }
       <input id="topic" placeholder="输入演示主题，回车开始生成" onkeydown="if(event.key==='Enter')doGenerate()">
     </label>
     <span class="pill-badge" id="style-badge"></span>
+    <label class="stepwise-toggle" title="开启后在大纲、配图两个节点暂停，等你确认再继续">
+      <input type="checkbox" id="stepwise-chk" onchange="setStepwise(this.checked)">分步确认
+    </label>
     <button class="btn btn-primary" id="btn-gen" onclick="doGenerate()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 3l14 9-14 9V3z"/></svg>
       生成
@@ -392,6 +404,13 @@ a.side-item:hover { color:var(--fg); }
         </summary>
         <div id="log"></div>
       </details>
+      <div class="review-banner" id="review-banner" hidden>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9l-8 13.9A2 2 0 004 21h16a2 2 0 001.7-3.2l-8-13.9a2 2 0 00-3.4 0z"/></svg>
+        <span class="rb-txt" id="review-text"></span>
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost btn-sm" onclick="toggleAi(true)">先改改</button>
+        <button class="btn btn-primary btn-sm" onclick="doContinue()">继续</button>
+      </div>
     </section>
     <div id="hero" class="panel hero">
       <div class="icon">
@@ -476,7 +495,9 @@ const TYPE_LABEL = {cover:'封面', toc:'目录', section:'章节', content:'图
 const LAYOUT_LABEL = {'image-right':'左文右图', 'image-left':'左图右文', 'image-top':'上图下文',
   'image-full':'全宽图', 'cards':'三栏卡片', 'columns':'两栏', 'center':'居中'};
 // 进度条百分比：与 renderStages 的阶段映射保持一致
-const PHASE_PCT = {idle:0, outline:22, images:52, designing:80, refining:80, ready:100};
+const PHASE_PCT = {idle:0, outline:22, images:52, review:52, designing:80, refining:80, ready:100};
+const STEP_LABEL = {outline: '大纲与风格已就绪，确认后开始逐页生图',
+                    design: '配图已完成，确认后 AI 开始设计 HTML'};
 const EXPORT_IDS = ['ex-html', 'ex-pptx', 'ex-pdf', 'ex-txt'];
 
 const $ = id => document.getElementById(id);
@@ -621,7 +642,9 @@ async function refresh() {
 
   renderStages(s.phase);
   renderStyleBadge(s.style_name);
+  $('stepwise-chk').checked = !!s.stepwise;
   renderLog(s.log);
+  renderReviewBanner(s);
   applyDeckTheme(s.theme);
   renderPreview(s);
   renderCards(s);
@@ -641,10 +664,33 @@ async function refresh() {
   }
 }
 
+function renderReviewBanner(s) {
+  const b = $('review-banner');
+  if (s.phase === 'review' && s.await_step) {
+    $('review-text').textContent = STEP_LABEL[s.await_step] || '请确认后继续';
+    b.hidden = false;
+  } else {
+    b.hidden = true;
+  }
+}
+
+async function doContinue() {
+  $('review-banner').hidden = true;
+  const {ok, data} = await post('/api/continue');
+  if (!ok) { toast(data.error || '无法继续'); return; }
+  startPolling();
+}
+
+async function setStepwise(enabled) {
+  await post('/api/stepwise', {enabled});
+  toast(enabled ? '已开启分步确认：将在大纲、配图后暂停' : '已关闭分步确认', 4000);
+}
+
 function renderStages(phase) {
   const map = {
     outline:   ['active', '', '', ''],
     images:    ['done', 'active', '', ''],
+    review:    ['done', 'active', '', ''],
     designing: ['done', 'done', 'active', ''],
     refining:  ['done', 'done', 'active', ''],
     ready:     ['done', 'done', 'done', 'done'],
