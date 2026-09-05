@@ -920,8 +920,47 @@ def api_brand():
 
 @app.route("/api/templates")
 def api_templates():
-    """列出内置模板（供界面选择）。"""
-    return jsonify({"templates": template_mod.builtin_templates()})
+    """列出模板库：内置 6 风格 + 用户自定义（存当前设计稿产生）。"""
+    return jsonify({"templates": template_mod.builtin_templates() + template_mod.custom_templates()})
+
+
+@app.route("/api/templates/save", methods=["POST"])
+def api_templates_save():
+    """把当前设计稿存为自定义模板：提取 :root 四色令牌作风格基因（配合 /api/theme 的令牌体系）。"""
+    data = request.get_json(force=True) if request.data else {}
+    name = (data.get("name") or "").strip()
+    with lock:
+        if state["phase"] not in ("ready", "review"):
+            return jsonify({"error": "请先生成 PPT，再保存模板"}), 409
+        html_path = state.get("html_path")
+        if not html_path:
+            return jsonify({"error": "当前没有设计稿"}), 409
+        local = os.path.join(DECKS_DIR, os.path.basename(unquote(html_path)))
+    if not os.path.isfile(local):
+        return jsonify({"error": "设计稿文件已不存在"}), 404
+    with open(local, encoding="utf-8") as f:
+        doc = f.read()
+    style = template_mod.extract_style_from_html(doc, name)
+    if not style:
+        return jsonify({"error": "该设计稿不含 CSS 变量（旧版生成），无法提取风格"}), 409
+    entry = template_mod.save_custom_template(style)
+    _log(f"已存自定义模板：{entry['name']}（主色 {entry['accent']}）")
+    return jsonify({"ok": True, "template": entry})
+
+
+@app.route("/api/templates/delete", methods=["POST"])
+def api_templates_delete():
+    """删除自定义模板（内置库不可删）；若正被选用则一并取消。"""
+    data = request.get_json(force=True) if request.data else {}
+    key = (data.get("key") or "").strip()
+    if not template_mod.delete_custom_template(key):
+        return jsonify({"error": "模板不存在或不可删除"}), 404
+    with lock:
+        if state.get("tpl_style") and state["tpl_style"].get("key") == key:
+            state["tpl_style"] = None
+            state["tpl_style_name"] = ""
+    _log(f"已删除自定义模板：{key}")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/template/select", methods=["POST"])

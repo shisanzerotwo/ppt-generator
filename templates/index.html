@@ -86,6 +86,8 @@ a.side-item:hover { color:var(--fg); }
 .tpl-chip.on { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
 .tpl-sw { width:14px; height:14px; border-radius:4px; flex-shrink:0; }
 .tpl-chip .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tpl-del { margin-left:auto; color:var(--muted); font-size:13px; line-height:1; padding:2px 4px; border-radius:4px; flex-shrink:0; }
+.tpl-del:hover { color:#e5484d; background:rgba(229,72,77,.12); }
 .tpl-current { font-size:11.5px; color:var(--muted); padding:4px 2px; }
 .tpl-current b { color:var(--accent); }
 .side-foot { border-top:1px solid var(--border); padding:10px 12px; }
@@ -377,6 +379,9 @@ a.side-item:hover { color:var(--fg); }
         <span class="txt">导入参考稿识别</span>
       </button>
       <input type="file" id="tpl-file" accept=".png,.jpg,.jpeg,.webp,.html" hidden onchange="analyzeReference(this)">
+      <button class="side-item" id="tpl-save-btn" onclick="saveCurrentAsTemplate()">
+        💾 存当前设计稿为模板
+      </button>
       <div class="tpl-current" id="tpl-current">当前：AI 自动选风格</div>
     </div>
   </details>
@@ -770,7 +775,8 @@ function renderTemplateList(activeKey) {
     `<button class="tpl-chip ${t.key === activeKey ? 'on' : ''}" data-tpl="${esc(t.key)}"
        title="${esc(t.name)}·${esc(t.mood)}">
        <span class="tpl-sw" style="background:${esc(t.accent)};border:1px solid ${esc(t.bg)}"></span>
-       <span class="txt">${esc(t.name)}</span></button>`).join('');
+       <span class="txt">${esc(t.name)}</span>${t.source === 'custom'
+         ? `<span class="tpl-del" data-del="${esc(t.key)}" title="删除此自定义模板">×</span>` : ''}</button>`).join('');
 }
 
 function renderTplCurrent(s) {
@@ -792,6 +798,24 @@ async function selectTemplate(key, isActive) {
   if (!ok) { toast(data.error || '模板选择失败'); return; }
   toast(isActive ? '已取消模板，回到 AI 自动选风格'
                  : '已选模板，下次生成生效', 4000);
+  refresh();
+}
+
+async function saveCurrentAsTemplate() {
+  const s = await (await fetch('/api/status')).json();
+  const name = (s.topic || '').slice(0, 12) || '我的模板';
+  const {ok, data} = await post('/api/templates/save', {name});
+  if (!ok) { toast(data.error || '保存模板失败'); return; }
+  toast(`已存为自定义模板：${data.template.name}（主色 ${data.template.accent}）`, 6000);
+  await loadTemplates();
+  refresh();
+}
+
+async function deleteCustomTemplate(key) {
+  const {ok, data} = await post('/api/templates/delete', {key});
+  if (!ok) { toast(data.error || '删除失败'); return; }
+  toast('已删除自定义模板');
+  await loadTemplates();
   refresh();
 }
 
@@ -910,6 +934,8 @@ $('sidebar').addEventListener('click', e => {
   if (deck) { openDeckViewer(deck.dataset.deck, deck.dataset.title, deck.dataset.when); return; }
   const proj = e.target.closest('button[data-project]');
   if (proj) { loadProject(proj.dataset.project); return; }
+  const del = e.target.closest('[data-del]');
+  if (del) { deleteCustomTemplate(del.dataset.del); return; }
   const tpl = e.target.closest('button[data-tpl]');
   if (tpl) selectTemplate(tpl.dataset.tpl, tpl.classList.contains('on'));
 });

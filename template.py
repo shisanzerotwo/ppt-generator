@@ -6,7 +6,9 @@
 
 import base64
 import json
+import os
 import re
+import uuid
 
 from zhipuai import ZhipuAI
 
@@ -14,6 +16,9 @@ import style as style_mod
 from llm_util import TEXT_MODEL, VISION_MODEL, llm_client
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# 自定义模板持久化目录：output/templates/*.json（模块常量便于测试 monkeypatch）
+CUSTOM_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "templates")
 
 # 内置模板 = 复用 style.STYLE_LIBRARY 的色板 + 追加一句版式骨架倾向，比纯风格更具体
 _LAYOUT_HINT = {
@@ -39,7 +44,9 @@ def builtin_templates() -> list[dict]:
 
 
 def get_template_style(key: str) -> dict | None:
-    """按 key 取内置模板的完整 style dict（含版式骨架并入 guidance）。"""
+    """按 key 取模板完整 style dict；自定义模板优先查（key 形如 custom:<id8>）。"""
+    if key and key.startswith("custom:"):
+        return _load_custom(key)
     s = style_mod.STYLE_LIBRARY.get(key)
     if not s:
         return None
@@ -48,6 +55,89 @@ def get_template_style(key: str) -> dict | None:
     if hint:
         out["guidance"] = f"{s.get('guidance', '')}；版式骨架：{hint}"
     return out
+
+
+# ---------------- 自定义模板库（设计稿一键存为模板，主题 CSS 令牌即风格基因） ----------------
+
+def _custom_path(key: str) -> str | None:
+    """custom:<id> → 文件路径；id 只放行十六进制字符，杜绝路径拼接逃逸。"""
+    if not key or not key.startswith("custom:"):
+        return None
+    cid = key[len("custom:"):]
+    if not re.fullmatch(r"[0-9a-f]{8}", cid):
+        return None
+    return os.path.join(CUSTOM_DIR, f"{cid}.json")
+
+
+def custom_templates() -> list[dict]:
+    """列出用户保存的自定义模板（与内置库同结构，多 source 字段供前端区分）。"""
+    if not os.path.isdir(CUSTOM_DIR):
+        return []
+    out = []
+    for fn in os.listdir(CUSTOM_DIR):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(CUSTOM_DIR, fn), encoding="utf-8") as f:
+                d = json.load(f)
+            out.append({
+                "key": d["key"], "name": d["name"], "mood": d.get("mood", ""),
+                "bg": d["bg"], "accent": d["accent"], "fg": d["fg"],
+                "layout_hint": "自定义模板", "source": "custom",
+            })
+        except (OSError, ValueError, KeyError):
+            continue  # 单个坏文件不影响整个列表
+    return out
+
+
+def save_custom_template(style_dict: dict) -> dict:
+    """持久化一个自定义模板，返回列表条目。key 随机生成，重复保存产生新条目。"""
+    os.makedirs(CUSTOM_DIR, exist_ok=True)
+    cid = uuid.uuid4().hex[:8]
+    d = dict(style_dict, key=f"custom:{cid}")
+    with open(os.path.join(CUSTOM_DIR, f"{cid}.json"), "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False)
+    return {"key": d["key"], "name": d["name"], "mood": d.get("mood", ""),
+            "bg": d["bg"], "accent": d["accent"], "fg": d["fg"],
+            "layout_hint": "自定义模板", "source": "custom"}
+
+
+def delete_custom_template(key: str) -> bool:
+    path = _custom_path(key)
+    if not path or not os.path.isfile(path):
+        return False
+    os.remove(path)
+    return True
+
+
+def _load_custom(key: str) -> dict | None:
+    path = _custom_path(key)
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def extract_style_from_html(html: str, name: str = "") -> dict | None:
+    """从设计稿 HTML 的 :root 设计令牌提取风格（bg/fg/accent/muted 至少齐 accent+bg）。
+
+    没有 :root 变量的旧稿返回 None（调用方 409 提示重新生成）。
+    """
+    m = re.search(r":root\s*\{([^}]*)\}", html or "", re.IGNORECASE)
+    if not m:
+        return None
+    block = m.group(1)
+    raw: dict = {"name": name or "我的模板"}
+    for k in ("bg", "fg", "accent", "muted"):
+        vm = re.search(rf"--{k}\s*:\s*(#[0-9a-fA-F]{{3,8}})", block, re.IGNORECASE)
+        if vm:
+            raw[k] = vm.group(1)
+    if "accent" not in raw or "bg" not in raw:
+        return None
+    return _sanitize(raw)
 
 
 def _sanitize(raw: dict) -> dict:
