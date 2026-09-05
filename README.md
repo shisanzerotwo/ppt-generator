@@ -5,7 +5,8 @@ AI 驱动的 PPT 生成器：输入主题，自动完成「大纲 → 生图 →
 ## ✨ 功能特性
 
 - **LLM 自主设计 HTML**：直接把大纲 + 图片交给 LLM 生成完整单文件 HTML 幻灯片，每页布局因内容而异，纯内联 CSS + SVG，零外部依赖，可离线打开、可打印 PDF
-- **AI 智能选风格**：去掉固定主题下拉框，AI 根据主题/内容从风格库自主判断视觉基调（深空科技 / 极简商务 / 清新浅色 / 暖调人文 / 活力渐变 / 自然墨绿）
+- **AI 智能选风格 + 模板导入**：默认 AI 根据主题从 6 套风格库自选（深空科技 / 极简商务 / 清新浅色 / 暖调人文 / 活力渐变 / 自然墨绿）；也可**手动选内置模板**（色板 + 版式骨架）或**导入参考稿**（上传设计图/HTML，AI 识别其配色与风格气质仿制），用户指定后跨生成保留、可清除
+- **左右分栏工作区**：出结果后左编辑（对话/卡片/排序）、右放映（设计稿常驻预览），改一处右侧实时看，不必上下滚动；窄屏自动回退单栏
 - **完整的生成流水线**：大纲（章节化、8~10 页）→ 逐页生图 → 视觉校验（提议者-审核者闭环，不契合自动改词重生）→ LLM 设计 HTML
 - **对话式修改（含定点）**：ready 后可整篇改（“整篇换商务风”），也可在右侧「AI 协作」面板圈选某页/某条要点定点改——只动被圈定的部分，其余页连配图一并保留，不打回重做
 - **内嵌查看器 / 放映 / 灯箱**：历史设计稿在工作台内的居中弹窗查看（ESC 或点遮罩关闭），一键全屏放映（方向键翻页）；卡片配图点击放大看清生图质量
@@ -16,7 +17,7 @@ AI 驱动的 PPT 生成器：输入主题，自动完成「大纲 → 生图 →
 - **品牌模板**：设定品牌名与主色（`#RRGGBB`），用品牌色覆盖 AI 风格的强调色并注入设计指引；用户级偏好跨生成保留，传空即清除
 - **页面排序与增删**：每张卡片可上移/下移/删除，也可插入新页；调整后点「重新设计」让设计稿同步
 - **专业工作台 UI**：左侧栏 + 主工作区，中性石墨配色 + 青瓷绿强调、内联 SVG 图标、暗色模式（`prefers-color-scheme`），遵循 web-design skill 反“AI 味”规范
-- **开发友好**：Web 界面实时进度条与阶段、可折叠日志、风格徽章；123 条 pytest 单测
+- **开发友好**：Web 界面实时进度条与阶段、可折叠日志、风格徽章；142 条 pytest 单测
 
 ## 🚀 快速开始
 
@@ -79,6 +80,7 @@ ZHIPUAI_BASE_URL=https://apihub.agnes-ai.com/v1
 |---|---|
 | `outline.py` | 主题/文档 → 章节化大纲 JSON（含自评迭代、布局多样化） |
 | `style.py` | AI 智能选风格：从 6 种预设风格库判断，决定色板/气质/设计指引 |
+| `template.py` | 内置模板库（色板 + 版式骨架）+ 参考稿识别（vision/文本提炼风格） |
 | `image_gen.py` | 按提示词生成每页配图 |
 | `critic.py` | 视觉校验 + 对话式修改大纲（提议者-审核者闭环） |
 | `html_gen.py` | **核心**：LLM 自主设计每页 HTML 布局，注入风格，容错重试 |
@@ -94,13 +96,16 @@ ZHIPUAI_BASE_URL=https://apihub.agnes-ai.com/v1
 | `POST /api/import` / `api/import_file` | 从文档文本/文件生成 |
 | `POST /api/refine` | 对话式修改：不带 `target` 改整篇；带 `target: {slide, quote?}` 只改指定页/要点（定点修改，不重跑整篇） |
 | `POST /api/redesign` | 重新触发 AI 设计（重生成 HTML） |
-| `GET /api/status` | 轮询状态（phase / await_step / stepwise / slides / html_path / style_name / brand / log） |
+| `GET /api/status` | 轮询状态（phase / await_step / stepwise / slides / html_path / style_name / tpl_style_name / brand / log） |
 | `POST /api/slide/<i>/text` | 保存单页标题与要点 |
 | `POST /api/slide/<i>/image` | 单页重新生图（可带自定义画面描述） |
 | `POST /api/slide/reorder` | 页面重排序（body 传 `order`：0..n-1 的完整排列；前端提供上移/下移按钮） |
 | `POST /api/slide/add` | 在 `after` 下标后插入一页空白 content 页 |
 | `DELETE /api/slide/<i>` | 删除某页（至少保留一页，删至最后一页时返回 400） |
 | `POST /api/brand` | 设置/清除品牌模板（名称 + 主色 `#RRGGBB`；用户级偏好跨生成保留，传空清除） |
+| `GET /api/templates` | 列出内置模板（6 套色板 + 版式骨架） |
+| `POST /api/template/select` | 选内置模板（`{key}`，传空清除回 AI 自动选） |
+| `POST /api/template/analyze` | 上传参考稿（图片 multipart 或 `{html}`）→ AI 识别风格存为模板 |
 | `POST /api/stepwise` | 开关分步确认（`{enabled}`） |
 | `POST /api/continue` | 分步确认放行（仅 `review` 态有效，否则 409） |
 | `GET /api/projects` | 历史项目库列表（ready 时自动快照，上限 30） |
@@ -115,7 +120,7 @@ ZHIPUAI_BASE_URL=https://apihub.agnes-ai.com/v1
 ## 🧪 测试
 
 ```bash
-pytest -q          # 123 条单测
+pytest -q          # 142 条单测
 ```
 
 测试通过 mock 截获 LLM 调用，覆盖：大纲解析、风格判定与回退、HTML 提取/重试、路径编码（防 XSS）、builder 版式等。
