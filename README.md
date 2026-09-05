@@ -11,7 +11,10 @@ AI 驱动的 PPT 生成器：输入主题，自动完成「大纲 → 生图 →
 - **多格式导出**：主产物 HTML（AI 设计稿，可预览/打印 PDF），另有 pptx（可编辑版）、PDF、大纲 txt 降级方案
 - **打印分页兑底**：LLM 漏写 `@media print` 时，`html_gen` 自动注入分页规则（1280×720 每页一张、`page-break-after`），保证浏览器打印/导出 PDF 排版正确
 - **历史设计稿**：侧栏「历史设计稿」列出最近 30 份已生成的设计稿（按时间倒序，含标题与时间），点击即可在新标签打开
-- **开发友好**：Web 界面实时显示阶段、日志、风格徽章；65 条 pytest 单测
+- **品牌模板**：`POST /api/brand` 设定品牌名与主色（`#RRGGBB` 校验），用品牌色覆盖 AI 风格的强调色并注入设计指引；品牌为用户级偏好，跨生成保留，传空即清除
+- **页面排序与增删**：每张卡片可上移/下移/删除，也可插入新页；调整后点「重新设计」让设计稿同步
+- **历史项目库**：ready 时自动把大纲快照（主题/风格/品牌/页面/设计稿）序列化到 `output/projects/`，`GET /api/projects` 列出、`POST /api/projects/load` 载入继续编辑（设计稿文件已缺失时自动置空，可重新设计）
+- **开发友好**：Web 界面实时显示阶段、日志、风格徽章；81 条 pytest 单测
 
 ## 🚀 快速开始
 
@@ -89,15 +92,24 @@ ZHIPUAI_BASE_URL=https://apihub.agnes-ai.com/v1
 | `POST /api/import` / `api/import_file` | 从文档文本/文件生成 |
 | `POST /api/refine` | 对话式修改并重设计 |
 | `POST /api/redesign` | 重新触发 AI 设计（重生成 HTML） |
-| `GET /api/status` | 轮询状态（phase / slides / html_path / style_name / log） |
+| `GET /api/status` | 轮询状态（phase / slides / html_path / style_name / brand / log） |
+| `POST /api/slide/<i>/text` | 保存单页标题与要点 |
+| `POST /api/slide/<i>/image` | 单页重新生图（可带自定义画面描述） |
+| `POST /api/slide/reorder` | 页面重排序（body 传 `order`：0..n-1 的完整排列；前端提供上移/下移按钮） |
+| `POST /api/slide/add` | 在 `after` 下标后插入一页空白 content 页 |
+| `DELETE /api/slide/<i>` | 删除某页（至少保留一页，删至最后一页时返回 400） |
+| `POST /api/brand` | 设置/清除品牌模板（名称 + 主色 `#RRGGBB`；用户级偏好跨生成保留，传空清除） |
+| `GET /api/projects` | 历史项目库列表（ready 时自动快照，上限 30） |
+| `POST /api/projects/load` | 载入历史项目快照继续编辑/重设计 |
 | `GET /api/decks` | 历史设计稿列表（按修改时间倒序，上限 30，含标题/链接/时间） |
 | `POST /api/export` `/export_pdf` `/export_html` `/export_txt` | 多格式导出 |
 | `GET /decks/<file>` | 访问 AI 设计稿 HTML |
+| `GET /images/<file>` | 访问生成的配图 |
 
 ## 🧪 测试
 
 ```bash
-pytest -q          # 65 条单测
+pytest -q          # 81 条单测
 ```
 
 测试通过 mock 截获 LLM 调用，覆盖：大纲解析、风格判定与回退、HTML 提取/重试、路径编码（防 XSS）、builder 版式等。
