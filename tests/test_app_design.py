@@ -21,6 +21,9 @@ def test_design_encodes_unsafe_topic(monkeypatch, tmp_path):
         name = urllib.parse.unquote(hp.removeprefix("/decks/"))
         assert name.endswith(".html")
     finally:
+        # _design_and_save 会把 phase 置为 designing，必须一并恢复，
+        # 否则后续走 /api/generate 的用例全部 409（测试间污染）
         app_module.state["topic"] = ""
         app_module.state["slides"] = []
         app_module.state["html_path"] = None
+        app_module.state["phase"] = "idle"

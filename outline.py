@@ -26,7 +26,8 @@ PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个
 - content 页：根据内容决定——具象场景/需要视觉冲击的，给画面描述（非空，走图文布局）；并列要点/概念性内容的，image_prompt 留空 ""（走卡片/两栏/居中布局）。同一份 PPT 建议混合图文页与无图页，避免全部同一布局
 - section / toc / end / data / timeline / compare 页：image_prompt 一律为 ""（空字符串）
 
-视觉规范：每页只讲一个观点；要点 2~3 条。
+视觉规范：每页只讲一个观点。
+{density_hint}
 
 【要点格式】content 页的 points 每条用「标题：描述」格式（中文冒号分隔，标题 6~12 字概括 + 描述一句话补充），让文字有层次。无描述的要点可直接写短句。
 
@@ -57,7 +58,8 @@ FROM_TEXT_PROMPT = """你是一位专业的 PPT 策划师。用户会给你一�
 
 总页数必须控制在 8~10 页之间。
 
-【提炼要求】不要照搬原文长段落，提炼成每页一个观点的短要点（每条不超过 20 字），只保留文档核心信息。content 页 points 每条用「标题：描述」格式（中文冒号分隔）。
+【提炼要求】不要照搬原文长段落，只保留文档核心信息，基于原文提炼、原文信息不足时不编造。content 页 points 每条用「标题：描述」格式（中文冒号分隔）。
+{density_hint}
 
 【布局建议】content 页可选 layout 字段：image-right（左文右图）/ image-left（左图右文）/ image-top（上图下文）/ image-full（全宽背景图+文字浮层）/ cards（三栏卡片）/ columns（两栏）/ center（居中大字），也可省略让系统自动决定。
 
@@ -72,6 +74,16 @@ FROM_TEXT_PROMPT = """你是一位专业的 PPT 策划师。用户会给你一�
 
 VALID_TYPES = {"cover", "toc", "section", "content", "data", "timeline", "compare", "end"}
 VALID_LAYOUTS = {"image-right", "image-left", "image-top", "image-full", "cards", "columns", "center"}
+
+# 内容密度档位：把"详略"量化成要点数与描述字数（参考 ai-ppt 的字数预算思路），
+# 默认标准档已比旧版（2~3 条短要点）加厚，详实档面向知识型分享
+DENSITY_HINTS = {
+    "sparse": "【内容密度：精简】每页要点 2 条；每条「标题：描述」，描述 10~20 字，点到即止。",
+    "balanced": "【内容密度：标准】每页要点 3 条；每条「标题：描述」，标题 6~12 字，"
+                "描述 20~35 字，写具体的事实、机制或例子，禁止空话套话。",
+    "dense": "【内容密度：详实】每页要点 3~4 条；每条描述 30~50 字，必须包含具体的机制解释、"
+             "数据、例子或对比；data 页的 chart 给 4~6 组数据。",
+}
 
 
 def _extract_json(text: str) -> list:
@@ -214,12 +226,16 @@ def _generate_with_prompt(prompt_text: str, label: str) -> list[dict]:
     raise RuntimeError(f"大纲生成失败（已重试 1 次）: {last_err}")
 
 
-def generate_outline(topic: str) -> list[dict]:
-    return _generate_with_prompt(PROMPT_TEMPLATE.format(topic=topic), topic)
+def generate_outline(topic: str, density: str = "balanced") -> list[dict]:
+    hint = DENSITY_HINTS.get(density, DENSITY_HINTS["balanced"])
+    return _generate_with_prompt(PROMPT_TEMPLATE.format(topic=topic, density_hint=hint), topic)
 
 
-def generate_outline_from_text(text: str) -> list[dict]:
-    return _generate_with_prompt(FROM_TEXT_PROMPT.format(text=text[:6000]), "文档内容")
+def generate_outline_from_text(text: str, density: str = "balanced") -> list[dict]:
+    hint = DENSITY_HINTS.get(density, DENSITY_HINTS["balanced"])
+    # 详实档需要更多原文素材支撑
+    cap = 12000 if density == "dense" else 6000
+    return _generate_with_prompt(FROM_TEXT_PROMPT.format(text=text[:cap], density_hint=hint), "文档内容")
 
 
 if __name__ == "__main__":

@@ -97,6 +97,9 @@ a.side-item:hover { color:var(--fg); }
 .model-btns .side-item { flex:1; justify-content:center; font-size:12px; }
 #model-panel summary { cursor:pointer; font-size:12.5px; padding:6px 8px; color:var(--muted); }
 #model-panel summary:hover { color:var(--accent); }
+.density-sel { padding:5px 8px; border:1px solid var(--border,#2a3548); border-radius:6px;
+  background:transparent; color:inherit; font-size:12.5px; cursor:pointer; }
+.density-sel:focus { outline:none; border-color:var(--accent); }
 .tpl-current { font-size:11.5px; color:var(--muted); padding:4px 2px; }
 .tpl-current b { color:var(--accent); }
 .side-foot { border-top:1px solid var(--border); padding:10px 12px; }
@@ -445,6 +448,11 @@ a.side-item:hover { color:var(--fg); }
     <label class="stepwise-toggle" title="开启后在大纲、配图两个节点暂停，等你确认再继续">
       <input type="checkbox" id="stepwise-chk" onchange="setStepwise(this.checked)">分步确认
     </label>
+    <select id="density-sel" class="density-sel" title="内容详实程度：要点数与每条描述的字数">
+      <option value="sparse">精简</option>
+      <option value="balanced" selected>标准</option>
+      <option value="dense">详实</option>
+    </select>
     <button class="btn btn-primary" id="btn-gen" onclick="doGenerate()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 3l14 9-14 9V3z"/></svg>
       生成
@@ -626,7 +634,7 @@ async function post(url, body) {
 async function doGenerate() {
   const topic = $('topic').value.trim();
   if (!topic) { toast('请先输入主题'); return; }
-  const {ok, data} = await post('/api/generate', {topic});
+  const {ok, data} = await post('/api/generate', {topic, density: $('density-sel').value});
   if (!ok) { toast(data.error); return; }
   $('btn-gen').disabled = true;
   setExports(true);
@@ -638,6 +646,7 @@ async function doImport(input) {
   if (!file) return;
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('density', $('density-sel').value);
   toast('正在解析文档…');
   const r = await fetch('/api/import_file', {method: 'POST', body: fd});
   const data = await r.json();

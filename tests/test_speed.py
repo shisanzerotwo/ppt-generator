@@ -83,7 +83,7 @@ def test_design_runs_parallel_with_images(client, monkeypatch):
     monkeypatch.setattr(image_gen, "generate_image", slow_gen)
     monkeypatch.setattr(html_gen, "generate_html_deck", fake_design)
     monkeypatch.setattr(outline, "generate_outline",
-                        lambda topic: [{"type": "cover", "title": "封面", "points": [],
+                        lambda topic, density="balanced": [{"type": "cover", "title": "封面", "points": [],
                                         "image_prompt": "p", "chart": None, "layout": None}])
 
     client.post("/api/stepwise", json={"enabled": False})
@@ -100,7 +100,7 @@ def test_design_runs_parallel_with_images(client, monkeypatch):
 def test_outline_cache_second_run_skips_llm(client, monkeypatch):
     calls = []
 
-    def counting_outline(topic):
+    def counting_outline(topic, density="balanced"):
         calls.append(topic)
         return [{"type": "cover", "title": "封面", "points": [], "image_prompt": "",
                  "chart": None, "layout": None}]
@@ -140,7 +140,7 @@ def test_design_failure_auto_retry(client, monkeypatch):
 
     monkeypatch.setattr(html_gen, "generate_html_deck", flaky_design)
     monkeypatch.setattr(outline, "generate_outline",
-                        lambda topic: [{"type": "cover", "title": "封面", "points": [],
+                        lambda topic, density="balanced": [{"type": "cover", "title": "封面", "points": [],
                                         "image_prompt": "", "chart": None, "layout": None}])
     client.post("/api/stepwise", json={"enabled": False})
     client.post("/api/generate", json={"topic": "设计重试测试"})
@@ -157,7 +157,7 @@ def test_design_persistent_failure_honest_state(client, monkeypatch):
 
     monkeypatch.setattr(html_gen, "generate_html_deck", bad_design)
     monkeypatch.setattr(outline, "generate_outline",
-                        lambda topic: [{"type": "cover", "title": "封面", "points": [],
+                        lambda topic, density="balanced": [{"type": "cover", "title": "封面", "points": [],
                                         "image_prompt": "", "chart": None, "layout": None}])
     client.post("/api/stepwise", json={"enabled": False})
     client.post("/api/generate", json={"topic": "设计持续失败"})

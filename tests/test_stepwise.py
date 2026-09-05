@@ -26,7 +26,7 @@ def isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "PROJECTS_DIR", str(tmp_path / "projects"))
     monkeypatch.setattr(app_mod, "OUTPUT_DIR", str(tmp_path))
 
-    def fake_outline(topic):
+    def fake_outline(topic, density="balanced"):
         return [{"type": "cover", "title": "封面", "points": [], "image_prompt": "p",
                  "chart": None, "layout": None},
                 {"type": "content", "title": "内容页", "points": ["要点：说明"],
