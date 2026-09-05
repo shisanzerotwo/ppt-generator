@@ -44,6 +44,14 @@ svg { flex-shrink:0; }
 .side-sec { padding:0 12px 8px; }
 .side-label { padding:10px 8px 6px; font-size:11px; font-weight:600; color:var(--faint);
               letter-spacing:.06em; text-transform:uppercase; }
+/* 品牌模板表单（阶段三 #6） */
+.brand-sec { display:flex; flex-direction:column; gap:6px; }
+.brand-sec input { width:100%; padding:6px 9px; font-size:12px; color:var(--fg);
+                   background:var(--surface-2, #f7f7fb); border:1px solid var(--border);
+                   border-radius:var(--r); }
+.brand-sec input[type="color"] { padding:2px; height:30px; flex:0 0 44px; cursor:pointer; }
+.brand-row { display:flex; gap:6px; align-items:center; }
+.brand-row .side-item { padding:6px 8px; font-size:12px; }
 .side-item { display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px;
              border:none; background:none; border-radius:var(--r); cursor:pointer;
              color:var(--muted); text-align:left; transition:background var(--t), color var(--t); }
@@ -247,6 +255,17 @@ svg { flex-shrink:0; }
   </div>
   <div class="side-label">历史设计稿</div>
   <div id="deck-list"></div>
+  <div class="side-label">历史项目</div>
+  <div id="project-list"></div>
+  <div class="side-label">品牌模板</div>
+  <div class="side-sec brand-sec">
+    <input id="brand-name" placeholder="品牌名（可空）" maxlength="20">
+    <div class="brand-row">
+      <input type="color" id="brand-color" value="#4f46e5" title="品牌主色">
+      <button class="side-item" onclick="saveBrand()" style="flex:1">应用</button>
+      <button class="side-item" onclick="clearBrand()" title="清除品牌模板">✕</button>
+    </div>
+  </div>
   <div class="side-foot">
     <details class="menu">
       <summary class="side-item" id="export-trigger">
@@ -312,6 +331,7 @@ svg { flex-shrink:0; }
         <input id="instruction" placeholder="对话修改，如：第 3 页更简洁 / 整篇换商务风格" onkeydown="if(event.key==='Enter')doRefine()">
       </label>
       <button class="btn btn-ghost" id="btn-refine" onclick="doRefine()" disabled>应用修改</button>
+      <button class="btn btn-ghost" id="btn-add-slide" onclick="addSlide()" disabled title="在末尾加一页">+ 加页</button>
     </div>
     <div id="cards"></div>
   </main>
@@ -463,6 +483,7 @@ async function refresh() {
   const r = await fetch('/api/status');
   const s = await r.json();
   const working = !['idle', 'ready'].includes(s.phase);
+  deckCount = s.slides.length;
   // 生成中途刷新页面（F5）后自动恢复轮询（审计 M1）
   if (working && !polling) polling = setInterval(refresh, 1000);
 
@@ -483,7 +504,8 @@ async function refresh() {
     const canExport = s.phase === 'ready' && s.slides.length > 0;
     setExports(!canExport);
     $('btn-refine').disabled = !canExport;
-    if (canExport) loadDecks();
+    $('btn-add-slide').disabled = !canExport;
+    if (canExport) { loadDecks(); loadProjects(); }
     if (s.phase === 'idle' && s.log.length && !s.slides.length) {
       const last = s.log[s.log.length - 1];
       if (last.msg.startsWith('生成中断')) toast('生成失败：' + last.msg, 6000);
@@ -530,6 +552,80 @@ async function loadDecks() {
          <span class="txt">${esc(d.title)}</span><span class="meta">${esc(d.when)}</span>
        </button>`).join('');
   } catch (e) { /* 历史列表失败不影响主流程 */ }
+}
+
+// ===== 阶段三：页面排序 / 增删（路线图 #7） =====
+let deckCount = 0;   // 由 refresh() 维护，供排序构造全排列
+
+async function reorderSlides(order) {
+  const r = await fetch('/api/slide/reorder', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                body: JSON.stringify({order})});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('版面已变更，点「重新设计」更新设计稿');
+  refresh();
+}
+
+function moveSlide(i, dir) {
+  const order = [...Array(deckCount).keys()];
+  [order[i], order[i + dir]] = [order[i + dir], order[i]];
+  reorderSlides(order);
+}
+
+async function delSlide(i) {
+  const r = await fetch(`/api/slide/${i}/delete`, {method:'DELETE'});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('页面已删除，点「重新设计」更新设计稿');
+  refresh();
+}
+
+async function addSlide() {
+  const r = await fetch('/api/slide/add', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('已加一页，点「重新设计」更新设计稿');
+  refresh();
+}
+
+// ===== 阶段三：品牌模板（路线图 #6） =====
+async function saveBrand() {
+  const name = $('brand-name').value.trim();
+  const color = $('brand-color').value;
+  const r = await fetch('/api/brand', {method:'POST', headers:{'Content-Type':'application/json'},
+                                       body: JSON.stringify({name, color})});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  toast('品牌模板已保存，重新设计时生效');
+}
+
+async function clearBrand() {
+  await fetch('/api/brand', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
+  $('brand-name').value = '';
+  toast('品牌模板已清除');
+}
+
+// ===== 阶段三：历史项目库（路线图 #8） =====
+async function loadProjects() {
+  try {
+    const r = await fetch('/api/projects');
+    const {projects} = await r.json();
+    $('project-list').innerHTML = projects.map(p =>
+      `<button class="side-item" onclick="loadProject('${escUrl(p.name)}')" title="${esc(p.title)}">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+         <span class="txt">${esc(p.title)}</span><span class="meta">${esc(p.when)}</span>
+       </button>`).join('');
+  } catch (e) { /* 历史列表失败不影响主流程 */ }
+}
+
+async function loadProject(name) {
+  const r = await fetch('/api/projects/load', {method:'POST', headers:{'Content-Type':'application/json'},
+                                               body: JSON.stringify({name})});
+  const d = await r.json();
+  if (!r.ok) { toast(d.error); return; }
+  if (polling) { clearInterval(polling); polling = null; }
+  toast('已载入历史项目');
+  refresh();
 }
 
 function renderPreview(s) {
@@ -641,6 +737,9 @@ function renderCards(s) {
         <span class="ttl">${esc(sl.title)}</span>
         ${checkBadge(sl)}
         <span class="sp"></span>
+        <button class="btn btn-ghost btn-sm" onclick="moveSlide(${i},-1)" ${i===0?'disabled':''} title="上移">↑</button>
+        <button class="btn btn-ghost btn-sm" onclick="moveSlide(${i},1)" ${i===s.slides.length-1?'disabled':''} title="下移">↓</button>
+        <button class="btn btn-ghost btn-sm" onclick="delSlide(${i})" title="删除此页">✕</button>
         <button class="btn btn-ghost btn-sm" onclick="saveText(${i})">保存</button>
       </div>
       ${body}
@@ -650,6 +749,7 @@ function renderCards(s) {
 
 refresh();
 loadDecks();
+loadProjects();
 </script>
 </body>
 </html>

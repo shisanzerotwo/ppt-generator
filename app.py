@@ -1,5 +1,6 @@
 """可视化制作 Web 界面后端：python app.py 后浏览器打开 http://127.0.0.1:5000"""
 
+import json
 import os
 import re
 import threading
@@ -19,6 +20,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 IMAGES_DIR = os.path.join(OUTPUT_DIR, "images")
 DECKS_DIR = os.path.join(OUTPUT_DIR, "decks")
+PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
 
 state = {
     "topic": "",
@@ -26,6 +28,7 @@ state = {
     "theme": "blue",  # 卡片区底色（固定值，视觉风格由 AI 按主题选定）
     "style": None,    # AI 选定的风格 key（style.STYLE_LIBRARY）
     "style_name": "", # AI 选定风格名（前端展示）
+    "brand": None,    # 品牌模板 {name, color}，用户自定义后覆盖风格强调色（路线图 #6）
     "slides": [],     # {title, points, image_prompt, image, imageStatus}
     "html_path": None,  # AI 自主设计的 HTML 主产物（web 路径 /decks/xxx.html）
     "log": [],
@@ -63,6 +66,7 @@ def _start_generation(content: str, from_text: bool) -> bool:
         state["slides"] = []
         state["style"] = None
         state["style_name"] = ""
+        # 注意：brand 不在此重置——它是用户级偏好，设过就跨生成生效，直到手动清除
         state["html_path"] = None
         state["log"] = []
         state["phase"] = "outline"
@@ -71,12 +75,46 @@ def _start_generation(content: str, from_text: bool) -> bool:
     return True
 
 
+def _apply_brand(chosen_style, brand):
+    """品牌模板（路线图 #6）：品牌主色覆盖 AI 风格强调色，并注入品牌指引。"""
+    base = dict(chosen_style or style_mod.STYLE_LIBRARY["fresh-light"])
+    base["name"] = f"{brand['name']}·品牌定制"
+    base["accent"] = brand["color"]
+    base["guidance"] = (base.get("guidance", "") +
+                        f" 品牌名为「{brand['name']}」，品牌主色 {brand['color']} 必须作为全篇强调色与关键装饰色。")
+    return base
+
+
+def _save_project_snapshot():
+    """路线图 #8：ready 后把 slides 序列化到 projects/，供历史回看与载入复用。"""
+    try:
+        with lock:
+            payload = {
+                "topic": state["topic"], "style": state.get("style"),
+                "style_name": state.get("style_name"), "brand": state.get("brand"),
+                "slides": [dict(s) for s in state["slides"]],
+                "html_path": state.get("html_path"),
+                "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            topic = state["topic"]
+        os.makedirs(PROJECTS_DIR, exist_ok=True)
+        safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
+        path = os.path.join(PROJECTS_DIR, f"{safe_topic}_{time.strftime('%Y%m%d_%H%M%S')}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception as e:
+        _log(f"项目快照保存失败：{e}")
+
+
 def _design_and_save():
     """designing 阶段：调 LLM 自主设计 HTML 并保存，失败仅记日志不阻断。"""
     with lock:
         slides = [dict(s) for s in state["slides"]]
         topic = state["topic"]
         chosen_style = style_mod.STYLE_LIBRARY.get(state.get("style"))
+        brand = state.get("brand")
+    if brand:
+        chosen_style = _apply_brand(chosen_style, brand)
     _phase("designing")
     _log("AI 正在自主设计 HTML 幻灯片…")
     image_map = {i: f"../images/slide_{i}.png" for i, s in enumerate(slides) if s.get("image")}
@@ -92,6 +130,7 @@ def _design_and_save():
         with lock:
             # basename 做 URL 编码：主题含引号/反引号等字符时不会被前端 onclick 拼接执行（审计 C1）
             state["html_path"] = f"/decks/{quote(os.path.basename(out_path))}"
+        _save_project_snapshot()
         _log(f"HTML 设计完成：{os.path.basename(out_path)}")
         return True
     except Exception as e:
@@ -569,6 +608,129 @@ def api_redesign():
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"ok": True})
+
+
+@app.route("/api/slide/reorder", methods=["POST"])
+def api_slide_reorder():
+    """页面重排序（路线图 #7）。order 为新顺序的下标排列。"""
+    data = request.get_json(force=True)
+    order = data.get("order")
+    with lock:
+        if state["phase"] != "ready":
+            return jsonify({"error": "请等待生成完成再调整页面"}), 409
+        n = len(state["slides"])
+        if not isinstance(order, list) or sorted(order) != list(range(n)):
+            return jsonify({"error": "order 必须是 0..n-1 的完整排列"}), 400
+        state["slides"] = [state["slides"][i] for i in order]
+    return jsonify({"ok": True})
+
+
+@app.route("/api/slide/add", methods=["POST"])
+def api_slide_add():
+    """在 after 下标后插入一页空白 content 页（路线图 #7）。"""
+    data = request.get_json(force=True) if request.data else {}
+    with lock:
+        if state["phase"] != "ready":
+            return jsonify({"error": "请等待生成完成再加页"}), 409
+        try:
+            i = len(state["slides"]) - 1 if data.get("after") is None else int(data["after"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "after 必须是页码"}), 400
+        if i < -1 or i >= len(state["slides"]):
+            return jsonify({"error": "页码不存在"}), 404
+        state["slides"].insert(i + 1, {
+            "type": "content", "title": "新页面", "points": [], "image_prompt": "",
+            "chart": None, "layout": None, "image": None, "imageStatus": "skipped",
+            "review": {"ok": True, "reason": "", "tries": 0}})
+    return jsonify({"ok": True, "index": i + 1})
+
+
+@app.route("/api/slide/<int:i>/delete", methods=["DELETE"])
+def api_slide_delete(i):
+    """删除一页（路线图 #7）。"""
+    with lock:
+        if state["phase"] != "ready":
+            return jsonify({"error": "请等待生成完成再删除页面"}), 409
+        if i < 0 or i >= len(state["slides"]):
+            return jsonify({"error": "页码不存在"}), 404
+        if len(state["slides"]) <= 1:
+            return jsonify({"error": "至少要保留一页"}), 400
+        state["slides"].pop(i)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/projects")
+def api_projects():
+    """历史项目列表（路线图 #8，按时间倒序，最多 30 条）。"""
+    if not os.path.isdir(PROJECTS_DIR):
+        return jsonify({"projects": []})
+    items = []
+    for name in os.listdir(PROJECTS_DIR):
+        if not name.lower().endswith(".json"):
+            continue
+        full = os.path.join(PROJECTS_DIR, name)
+        try:
+            mtime = os.path.getmtime(full)
+        except OSError:
+            continue
+        stem = name[:-5]
+        parts = stem.rsplit("_", 2)
+        title = parts[0].replace("_", " ") if len(parts) == 3 else stem
+        items.append({"title": title, "name": name, "mtime": mtime})
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    for it in items:
+        it["when"] = time.strftime("%m-%d %H:%M", time.localtime(it.pop("mtime")))
+    return jsonify({"projects": items[:30]})
+
+
+@app.route("/api/projects/load", methods=["POST"])
+def api_projects_load():
+    """载入历史项目：恢复 topic/slides/style 与设计稿链接。"""
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    if (not name or "/" in name or "\\" in name or ".." in name
+            or not name.endswith(".json")):
+        return jsonify({"error": "非法项目名"}), 400
+    full = os.path.join(PROJECTS_DIR, name)
+    if not os.path.isfile(full):
+        return jsonify({"error": "项目不存在"}), 404
+    try:
+        with open(full, encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return jsonify({"error": "项目文件损坏"}), 500
+    with lock:
+        if state["phase"] not in ("idle", "ready"):
+            return jsonify({"error": "正在生成中，无法载入"}), 409
+        html_path = payload.get("html_path")
+        if html_path and not os.path.isfile(
+                os.path.join(DECKS_DIR, os.path.basename(html_path))):
+            html_path = None  # 设计稿已不在，可重新设计
+        state.update({
+            "topic": payload.get("topic", ""), "style": payload.get("style"),
+            "style_name": payload.get("style_name", ""), "brand": payload.get("brand"),
+            "slides": payload.get("slides", []), "html_path": html_path,
+            "phase": "ready"})
+    _log(f"已载入历史项目：{name}")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/brand", methods=["POST"])
+def api_brand():
+    """品牌模板（路线图 #6）：设置/清除品牌名与品牌主色。"""
+    data = request.get_json(force=True) if request.data else {}
+    name = (data.get("name") or "").strip()
+    color = (data.get("color") or "").strip()
+    if not name and not color:
+        with lock:
+            state["brand"] = None
+        return jsonify({"ok": True, "brand": None})
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        return jsonify({"error": "颜色需为 #RRGGBB 格式"}), 400
+    brand = {"name": name[:20] or "品牌", "color": color}
+    with lock:
+        state["brand"] = brand
+    return jsonify({"ok": True, "brand": brand})
 
 
 @app.route("/images/<path:filename>")
