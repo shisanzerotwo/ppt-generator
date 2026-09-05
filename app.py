@@ -743,6 +743,55 @@ def decks(filename):
     return send_from_directory(DECKS_DIR, filename)
 
 
+ARTIFACT_EXT = (".pptx", ".pdf", ".txt")
+
+
+@app.route("/api/artifacts")
+def api_artifacts():
+    """列出可打开/下载的产物：output 根下 pptx/pdf/txt + decks 下 html。"""
+    items = []
+    if os.path.isdir(OUTPUT_DIR):
+        for name in os.listdir(OUTPUT_DIR):
+            if not name.lower().endswith(ARTIFACT_EXT):
+                continue
+            full = os.path.join(OUTPUT_DIR, name)
+            if not os.path.isfile(full):
+                continue
+            try:
+                mtime = os.path.getmtime(full)
+            except OSError:
+                continue
+            kind = name.rsplit(".", 1)[-1].lower()
+            items.append({"name": name, "kind": kind, "url": f"/files/{quote(name)}",
+                          "mtime": mtime})
+    if os.path.isdir(DECKS_DIR):
+        for name in os.listdir(DECKS_DIR):
+            if not name.lower().endswith(".html"):
+                continue
+            full = os.path.join(DECKS_DIR, name)
+            try:
+                mtime = os.path.getmtime(full)
+            except OSError:
+                continue
+            items.append({"name": name, "kind": "html", "url": f"/decks/{quote(name)}",
+                          "mtime": mtime})
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    for it in items:
+        stem = it["name"].rsplit(".", 1)[0]
+        parts = stem.rsplit("_", 2)
+        it["title"] = parts[0].replace("_", " ") if len(parts) == 3 else stem
+        it["when"] = time.strftime("%m-%d %H:%M", time.localtime(it.pop("mtime")))
+    return jsonify({"artifacts": items[:30]})
+
+
+@app.route("/files/<path:filename>")
+def artifact_files(filename):
+    """下载 output 根下的产物文件。send_from_directory 内部做 safe_join，越界路径被拒。"""
+    if not filename.lower().endswith(ARTIFACT_EXT):
+        return jsonify({"error": "该类型不支持下载"}), 403
+    return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
+
+
 @app.route("/api/decks")
 def api_decks():
     """列出历史设计稿，供侧栏历史项目区（按时间倒序，最多 30 条）。"""

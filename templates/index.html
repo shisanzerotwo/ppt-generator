@@ -37,7 +37,7 @@ svg { flex-shrink:0; }
 .layout { display:flex; min-height:100vh; }
 .sidebar { width:var(--sidebar-w); flex-shrink:0; background:var(--surface);
            border-right:1px solid var(--border); display:flex; flex-direction:column;
-           position:sticky; top:0; height:100vh; }
+           position:sticky; top:0; height:100vh; overflow-y:auto; }
 .brand { display:flex; align-items:center; gap:9px; padding:20px 20px 16px;
          font-size:15px; font-weight:700; letter-spacing:-.01em; }
 .brand svg { color:var(--accent); }
@@ -61,9 +61,22 @@ svg { flex-shrink:0; }
 .side-item span.meta { margin-left:auto; font-size:11px; color:var(--faint); font-family:var(--mono); }
 .side-item .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .side-item:disabled { opacity:.4; cursor:not-allowed; }
-#deck-list { flex:1; overflow-y:auto; padding:0 12px 12px; }
-#deck-list:empty::after { content:"暂无历史"; display:block; padding:8px 10px;
-                          font-size:12px; color:var(--faint); }
+a.side-item { text-decoration:none; color:var(--muted); }
+a.side-item:hover { color:var(--fg); }
+/* 侧栏分组：三组列表可折叠，整体随侧栏滚动，避免内容变多后挤压 */
+.side-grp { padding:0 12px; }
+.side-grp > summary.side-label { cursor:pointer; list-style:none; display:flex;
+                                 align-items:center; gap:6px; user-select:none; }
+.side-grp > summary.side-label::-webkit-details-marker { display:none; }
+.side-grp > summary.side-label::after { content:""; width:8px; height:8px; margin-left:auto;
+  border-right:1.5px solid var(--faint); border-bottom:1.5px solid var(--faint);
+  transform:rotate(-45deg); transition:transform var(--t); }
+.side-grp[open] > summary.side-label::after { transform:rotate(45deg); }
+.grp-body { max-height:216px; overflow-y:auto; padding-bottom:4px; }
+.grp-body:empty::after { content:"暂无记录"; display:block; padding:6px 10px;
+                         font-size:12px; color:var(--faint); }
+.art-kind { font-size:10px; font-family:var(--mono); color:var(--muted);
+            border:1px solid var(--border); border-radius:4px; padding:0 4px; flex-shrink:0; }
 .side-foot { border-top:1px solid var(--border); padding:10px 12px; }
 .workspace { flex:1; min-width:0; display:flex; flex-direction:column; }
 /* ===== 顶栏（瘦身：仅输入 + 生成）===== */
@@ -257,7 +270,7 @@ svg { flex-shrink:0; }
 </head>
 <body>
 <div class="layout">
-<aside class="sidebar">
+<aside class="sidebar" id="sidebar">
   <div class="brand">
     <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
       <rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>
@@ -274,17 +287,27 @@ svg { flex-shrink:0; }
     </button>
     <input type="file" id="file-input" accept=".md,.txt,.docx" hidden onchange="doImport(this)">
   </div>
-  <div class="side-label">历史设计稿</div>
-  <div id="deck-list"></div>
-  <div class="side-label">历史项目</div>
-  <div id="project-list"></div>
+  <details class="side-grp" open>
+    <summary class="side-label">历史设计稿</summary>
+    <div class="grp-body" id="deck-list"></div>
+  </details>
+  <details class="side-grp">
+    <summary class="side-label">历史项目</summary>
+    <div class="grp-body" id="project-list"></div>
+  </details>
+  <details class="side-grp">
+    <summary class="side-label">导出产物</summary>
+    <div class="grp-body" id="artifact-list"></div>
+  </details>
   <div class="side-label">品牌模板</div>
   <div class="side-sec brand-sec">
     <input id="brand-name" placeholder="品牌名（可空）" maxlength="20">
     <div class="brand-row">
-      <input type="color" id="brand-color" value="#4f46e5" title="品牌主色">
+      <input type="color" id="brand-color" value="#0d9488" title="品牌主色">
       <button class="side-item" onclick="saveBrand()" style="flex:1">应用</button>
-      <button class="side-item" onclick="clearBrand()" title="清除品牌模板">✕</button>
+      <button class="side-item" onclick="clearBrand()" aria-label="清除品牌模板" title="清除品牌模板">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
     </div>
   </div>
   <div class="side-foot">
@@ -401,10 +424,10 @@ function esc(s) {
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-// URL 白名单：只放行后端产出的两类静态路径，杜绝内联事件/属性里的注入
+// URL 白名单：只放行后端产出的静态路径，杜绝内联事件/属性里的注入
 function escUrl(u) {
   const s = String(u ?? '');
-  return /^\/(decks|images)\/[^"'<>\s]*$/.test(s) ? s : '';
+  return /^\/(decks|images|files)\/[^"'<>\s]*$/.test(s) ? s : '';
 }
 
 let toastTimer = null;
@@ -511,14 +534,17 @@ async function regenImage(i) {
   startPolling();
 }
 
-async function doExport()     { const {ok, data} = await post('/api/export');      toast(ok ? '已导出：' + data.path : data.error, 8000); }
-async function doExportTxt()  { const {ok, data} = await post('/api/export_txt');  toast(ok ? '已导出大纲：' + data.path : data.error, 8000); }
-async function doExportPdf()  { const {ok, data} = await post('/api/export_pdf');  toast(ok ? '已导出 PDF：' + data.path : (data.error || 'PDF 导出失败'), 6000); }
-async function doExportHtml() {
-  const {ok, data} = await post('/api/export_html');
-  if (!ok) { toast(data.error); return; }
-  toast('已导出 HTML：' + data.path, 8000);
+// 导出后刷新侧栏产物区，用户可直接点开/下载，不必去翻 toast 里的路径
+async function exportAs(url, label) {
+  const {ok, data} = await post(url);
+  if (!ok) { toast(data.error || (label + ' 导出失败')); return; }
+  toast('已导出' + label + '，见侧栏「导出产物」', 5000);
+  loadArtifacts();
 }
+async function doExport()     { exportAs('/api/export', ' pptx'); }
+async function doExportTxt()  { exportAs('/api/export_txt', '大纲'); }
+async function doExportPdf()  { exportAs('/api/export_pdf', ' PDF'); }
+async function doExportHtml() { exportAs('/api/export_html', ' HTML'); }
 async function refresh() {
   const r = await fetch('/api/status');
   const s = await r.json();
@@ -545,7 +571,7 @@ async function refresh() {
     setExports(!canExport);
     $('btn-refine').disabled = !canExport;
     $('btn-add-slide').disabled = !canExport;
-    if (canExport) { loadDecks(); loadProjects(); }
+    if (canExport) { loadDecks(); loadProjects(); loadArtifacts(); }
     if (s.phase === 'idle' && s.log.length && !s.slides.length) {
       const last = s.log[s.log.length - 1];
       if (last.msg.startsWith('生成中断')) toast('生成失败：' + last.msg, 6000);
@@ -594,6 +620,23 @@ async function loadDecks() {
          <span class="txt">${esc(d.title)}</span><span class="meta">${esc(d.when)}</span>
        </button>`).join('');
   } catch (e) { /* 历史列表失败不影响主流程 */ }
+}
+
+async function loadArtifacts() {
+  try {
+    const r = await fetch('/api/artifacts');
+    const {artifacts} = await r.json();
+    $('artifact-list').innerHTML = artifacts.map(a => {
+      const url = escUrl(a.url);
+      if (!url) return '';
+      const kind = `<span class="art-kind">${esc(a.kind.toUpperCase())}</span>`;
+      // html 走查看器（data-deck 由侧栏委托接管），其余为下载链接
+      return a.kind === 'html'
+        ? `<button class="side-item" data-deck="${url}" data-title="${esc(a.title)}" data-when="${esc(a.when)}"
+             title="${esc(a.title)} · ${esc(a.when)}">${kind}<span class="txt">${esc(a.title)}</span></button>`
+        : `<a class="side-item" href="${url}" download title="下载 ${esc(a.title)}">${kind}<span class="txt">${esc(a.title)}</span><span class="meta">${esc(a.when)}</span></a>`;
+    }).join('');
+  } catch (e) { /* 产物列表失败不影响主流程 */ }
 }
 
 // ===== 内嵌查看器（替代新标签跳转）：放映 / 灯箱共用一个 dialog =====
@@ -647,18 +690,16 @@ function closeViewer() { $('viewer').close(); }
 // 点击遮罩关闭（dialog 自身收到 click 说明点在内容区外）
 $('viewer').addEventListener('click', e => { if (e.target === $('viewer')) closeViewer(); });
 
-// 事件委托：历史稿列表打开查看器、卡片配图开灯箱
-$('deck-list').addEventListener('click', e => {
-  const btn = e.target.closest('button[data-deck]');
-  if (btn) openDeckViewer(btn.dataset.deck, btn.dataset.title, btn.dataset.when);
+// 事件委托（侧栏一处搞定）：历史稿/产物 html 打开查看器，历史项目载入；卡片配图开灯箱
+$('sidebar').addEventListener('click', e => {
+  const deck = e.target.closest('button[data-deck]');
+  if (deck) { openDeckViewer(deck.dataset.deck, deck.dataset.title, deck.dataset.when); return; }
+  const proj = e.target.closest('button[data-project]');
+  if (proj) loadProject(proj.dataset.project);
 });
 $('cards').addEventListener('click', e => {
   const img = e.target.closest('.img-area img[data-full]');
   if (img) openLightbox(img.dataset.full, img.alt);
-});
-$('project-list').addEventListener('click', e => {
-  const btn = e.target.closest('button[data-project]');
-  if (btn) loadProject(btn.dataset.project);
 });
 // 退出全屏后收回面板高度，避免 iframe 残留 100vh
 $('viewer').addEventListener('close', () => {
@@ -867,6 +908,7 @@ function renderCards(s) {
 refresh();
 loadDecks();
 loadProjects();
+loadArtifacts();
 </script>
 </body>
 </html>
