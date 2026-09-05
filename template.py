@@ -135,6 +135,10 @@ def extract_style_from_html(html: str, name: str = "") -> dict | None:
         vm = re.search(rf"--{k}\s*:\s*(#[0-9a-fA-F]{{3,8}})", block, re.IGNORECASE)
         if vm:
             raw[k] = vm.group(1)
+    for fk in ("font_title", "font_body"):
+        fm = re.search(rf"--{fk.replace('_', '-')}\s*:\s*([^;}}]+)", block, re.IGNORECASE)
+        if fm:
+            raw[fk] = fm.group(1).strip()
     if "accent" not in raw or "bg" not in raw:
         return None
     return _sanitize(raw)
@@ -155,6 +159,9 @@ def _sanitize(raw: dict) -> dict:
         "fg": hexval("fg"), "muted": hexval("muted"),
         "mood": str(raw.get("mood") or "")[:40],
         "guidance": str(raw.get("guidance") or "参照参考稿的整体气质与配色")[:200],
+        # 字体栈跟风格走（style.py 各风格已配标题/正文对）；没有则回落基础字体的默认
+        **{fk: str(raw[fk])[:160] for fk in ("font_title", "font_body")
+           if str(raw.get(fk) or "").strip()},
     }
 
 

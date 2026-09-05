@@ -22,6 +22,7 @@ PROMPT_TEMPLATE = """你是一位顶级幻灯片视觉设计师。根据下面�
 3. 只用 <style> 内联 CSS 与内联 SVG，禁止引用任何外部资源（无 CDN、无外链字体、无外链图片）
 4. 图片一律使用页面数据中给定的 image 相对路径，不得虚构或改动其他路径；无 image 字段的页面不要放图
 5. 颜色必须收敛到 CSS 设计令牌：在 <style> 开头定义 :root {{ --bg:…; --fg:…; --accent:…; --muted:…; }}，全篇这四种语义色一律引用 var(--bg)/var(--fg)/var(--accent)/var(--muted)，不得在 :root 之外写死这些语义色的十六进制值（同色的深浅变体可用透明度/渐变从令牌派生）
+6. 字体必须区分层级并收敛到设计令牌：:root 里定义 --font-title（标题/大字/数字冲击用）与 --font-body（正文/说明用）两组字体栈，标题类元素一律 font-family:var(--font-title)，正文类一律 var(--font-body)；两组字体族必须明显不同（如黑体配雅黑、宋体配雅黑），禁止通篇同一字体只靠字号区分
 
 【按内容自主设计（核心）】
 每页布局必须因内容而异，禁止所有页面同构：
@@ -125,10 +126,14 @@ def _build_prompt(topic: str, slides: list[dict], image_map: dict[int, str], sty
         guidance = style_mod.style_guidance(style)
         if guidance:
             prompt = prompt.replace("【大纲数据】", guidance + "\n\n【大纲数据】", 1)
-        # 显式给出四色令牌值，确保 :root 变量与本稿风格（或用户模板/品牌色）一致
+        # 显式给出四色令牌与字体对，确保 :root 变量与本稿风格（或用户模板/品牌色）一致
         palette = {k: style[k] for k in ("bg", "fg", "accent", "muted") if style.get(k)}
-        if len(palette) >= 2:
-            pairs = "；".join(f"--{k}：{v}" for k, v in palette.items())
+        pairs = "；".join(f"--{k}：{v}" for k, v in palette.items())
+        t_font = style.get("font_title")
+        b_font = style.get("font_body")
+        if t_font and b_font:
+            pairs += f"；--font-title：{t_font}；--font-body：{b_font}"
+        if pairs:
             prompt = prompt.replace(
                 "【大纲数据】",
                 f"【视觉基调（写入 :root 设计令牌）】{pairs}\n\n【大纲数据】",
