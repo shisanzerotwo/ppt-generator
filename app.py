@@ -122,8 +122,12 @@ def _save_project_snapshot():
         _log(f"项目快照保存失败：{e}")
 
 
-def _design_and_save():
-    """designing 阶段：调 LLM 自主设计 HTML 并保存，失败仅记日志不阻断。"""
+def _design_and_save(image_map=None):
+    """designing 阶段：调 LLM 自主设计 HTML 并保存，失败仅记日志不阻断。
+
+    image_map 缺省时按 state 的 image 字段取（refine/redesign 路径，图片已就位）；
+    并行路径显式传入按 image_prompt 预定的映射（只依赖路径约定，不等图片内容）。
+    """
     with lock:
         slides = [dict(s) for s in state["slides"]]
         topic = state["topic"]
@@ -134,7 +138,8 @@ def _design_and_save():
         chosen_style = _apply_brand(chosen_style, brand)
     _phase("designing")
     _log("AI 正在自主设计 HTML 幻灯片…")
-    image_map = {i: f"../images/slide_{i}.png" for i, s in enumerate(slides) if s.get("image")}
+    if image_map is None:
+        image_map = {i: f"../images/slide_{i}.png" for i, s in enumerate(slides) if s.get("image")}
     try:
         doc = html_gen.generate_html_deck(topic, slides, image_map, chosen_style)
         os.makedirs(DECKS_DIR, exist_ok=True)
@@ -178,6 +183,39 @@ def _pause_gate(step: str, label: str):
         with lock:
             state["await_step"] = None
             state["phase"] = "images" if step == "outline" else "designing"
+
+
+def _outline_cache_path(content: str, from_text: bool) -> str:
+    """大纲指纹缓存路径：同主题/同文档重生成免一次 30~200s 的 LLM 调用（速度优化②）。
+
+    路径运行时从 OUTPUT_DIR 拼（不用导入期常量），测试 monkeypatch 才能生效。
+    """
+    key = hashlib.sha256(f"{from_text}|{content}".encode("utf-8")).hexdigest()
+    return os.path.join(OUTPUT_DIR, "outline_cache", f"{key}.json")
+
+
+def _load_outline_cache(content: str, from_text: bool):
+    path = _outline_cache_path(content, from_text)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            slides = json.load(f)
+        return slides if isinstance(slides, list) and slides else None
+    except (OSError, ValueError):
+        return None
+
+
+def _save_outline_cache(content: str, from_text: bool, slides: list):
+    try:
+        path = _outline_cache_path(content, from_text)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(slides, f, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        pass  # 缓存写失败不影响主流程
 
 
 def _image_cache_path(title: str, prompt: str, points) -> str:
@@ -282,13 +320,23 @@ def _generation_worker(content: str, from_text: bool = False):
     try:
         if from_text:
             _log("从文档提炼大纲…")
-            slides = outline.generate_outline_from_text(content)
+            slides = _load_outline_cache(content, True)
+            if slides:
+                _log("命中大纲缓存，直接复用（输入指纹一致）")
+            else:
+                slides = outline.generate_outline_from_text(content)
+                _save_outline_cache(content, True, slides)
             if slides:
                 with lock:
                     state["topic"] = slides[0].get("title", "") or content[:20]
         else:
             _log(f"生成大纲：{content}")
-            slides = outline.generate_outline(content)
+            slides = _load_outline_cache(content, False)
+            if slides:
+                _log("命中大纲缓存，直接复用（输入指纹一致）")
+            else:
+                slides = outline.generate_outline(content)
+                _save_outline_cache(content, False, slides)
         with lock:
             state["slides"] = [
                 {"type": s.get("type", "content"), "title": s.get("title", ""),
@@ -317,17 +365,40 @@ def _generation_worker(content: str, from_text: bool = False):
             _log(f"AI 选定风格：{chosen.get('name')} {reason}")
         t_style_done = time.time()  # gate 前取点：用户在分步确认停留的时长不计入阶段耗时（审计 L7）
         _pause_gate("outline", "大纲与风格")
-        _log("开始逐页生图")
-        _phase("images")
 
-        _gen_images()
-        t_images_done = time.time()
-        _pause_gate("design", "配图")
-        _design_and_save()
-        t_done = time.time()
-        # 耗时打点：先看清慢在哪一环，再谈优化
-        _log(f"耗时统计：大纲+风格 {t_style_done - t0:.0f}s / 配图 {t_images_done - t_style_done:.0f}s"
-             f" / 设计 {t_done - t_images_done:.0f}s / 总计 {t_done - t0:.0f}s")
+        if state.get("stepwise"):
+            # 分步确认：保持"配图 → 审阅 → 设计"的串行闸门语义
+            _log("开始逐页生图")
+            _phase("images")
+            _gen_images()
+            t_images_done = time.time()
+            _pause_gate("design", "配图")
+            _design_and_save()
+            t_done = time.time()
+            # 耗时打点：先看清慢在哪一环，再谈优化
+            _log(f"耗时统计：大纲+风格 {t_style_done - t0:.0f}s / 配图 {t_images_done - t_style_done:.0f}s"
+                 f" / 设计 {t_done - t_images_done:.0f}s / 总计 {t_done - t0:.0f}s")
+        else:
+            # 非分步：生图与设计并行——设计只依赖图片路径约定（slide_i.png），
+            # 不需要等图片内容生成完，省一次串行等待（速度优化①）
+            _log("生图与设计并行执行")
+            _phase("images")
+            with lock:
+                par_slides = [dict(s) for s in state["slides"]]
+            par_map = {i: f"../images/slide_{i}.png" for i, s in enumerate(par_slides)
+                       if s.get("image_prompt")}
+            design_thread = threading.Thread(target=_design_and_save, args=(par_map,), daemon=True)
+            design_thread.start()
+            _gen_images()
+            design_thread.join()
+            t_done = time.time()
+            # 极少数页生图最终失败时，设计稿对应图位会引用不存在的文件——日志明示
+            failed = [i for i in par_map
+                      if not os.path.isfile(os.path.join(IMAGES_DIR, f"slide_{i}.png"))]
+            if failed:
+                _log(f"提示：第 {'、'.join(str(i + 1) for i in failed)} 页配图失败，设计稿对应图位留空")
+            _log(f"耗时统计：大纲+风格 {t_style_done - t0:.0f}s / 配图+设计并行 "
+                 f"{t_done - t_style_done:.0f}s / 总计 {t_done - t0:.0f}s")
         with lock:
             cur_slides = [dict(s) for s in state["slides"]]
         rep = quality_mod.check_deck(cur_slides)
