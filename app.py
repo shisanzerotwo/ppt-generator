@@ -8,7 +8,7 @@ import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -693,7 +693,10 @@ def _build_html_deck(topic: str, slides: list[dict], theme: str, out_path: str) 
             body = f'<section class="slide end"><h1 class="center">{title}</h1></section>'
         else:
             lis = "".join(f"<li>{_html_escape(p)}</li>" for p in points)
-            img = f'<img class="deck-img" src="{s["image"].lstrip("/")}" alt="">' if s.get("image") else ""
+            # img src 白名单：只放行本站 images/ 相对路径，再过转义（审计 A：防项目 JSON 注入 src）
+            img_path = str(s.get("image") or "").lstrip("/")
+            img = (f'<img class="deck-img" src="{_html_escape(img_path)}" alt="">'
+                   if img_path.startswith("images/") else "")
             row = f'<div class="row"><ul>{lis}</ul>{img}</div>' if img else f'<ul>{lis}</ul>'
             body = f'<section class="slide"><h2 class="h">{title}</h2>{row}</section>'
         sections.append(body)
@@ -747,7 +750,7 @@ def api_export_html():
 
     with lock:
         html_path = state.get("html_path")
-    if html_path and os.path.isfile(os.path.join(DECKS_DIR, os.path.basename(html_path))):
+    if html_path and os.path.isfile(os.path.join(DECKS_DIR, os.path.basename(unquote(html_path)))):
         # 同源导出：LLM 设计稿本身就是 HTML 演示版，不再走第二套简版模板两副面孔
         _log("已导出 HTML（与设计稿同源）")
         return jsonify({"ok": True, "same_source": True, "path": html_path})
@@ -858,7 +861,9 @@ def api_projects_load():
     """载入历史项目：恢复 topic/slides/style 与设计稿链接。"""
     data = request.get_json(force=True)
     name = (data.get("name") or "").strip()
-    if (not name or "/" in name or "\\" in name or ".." in name
+    # 原有 ".."/分隔符拦截 + 新增冒号拦截（审计 C：ntpath.join 遇 "C:x.json" 会逃出项目目录）；
+    # 不用 \w 白名单——safe_topic 保留 . ! 等字符，白名单会误伤历史项目文件
+    if (not name or "/" in name or "\\" in name or ".." in name or ":" in name
             or not name.endswith(".json")):
         return jsonify({"error": "非法项目名"}), 400
     full = os.path.join(PROJECTS_DIR, name)
@@ -992,7 +997,8 @@ def api_theme():
         html_path = state.get("html_path")
         if not html_path:
             return jsonify({"error": "当前没有设计稿"}), 409
-        local = os.path.join(DECKS_DIR, os.path.basename(html_path))
+        # html_path 存的是 quote 编码名，中文主题直接 basename 会找不到文件（审计 B）
+        local = os.path.join(DECKS_DIR, os.path.basename(unquote(html_path)))
     if not os.path.isfile(local):
         return jsonify({"error": "设计稿文件已不存在"}), 404
     with open(local, encoding="utf-8") as f:

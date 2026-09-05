@@ -41,7 +41,11 @@ def parse_pdf(data: bytes) -> str:
         # 避免页与页之间留下多余空行
         texts: list[str] = []
         for page in pdf.pages:
-            text = (page.extract_text() or "").strip()
+            try:
+                text = (page.extract_text() or "").strip()
+            except Exception as e:
+                # 单页损坏也要走统一 ValueError 通道（见 docstring），不透传底层异常
+                raise ValueError(f"PDF 文本提取失败: {e}") from e
             if text:
                 texts.append(text)
         if not texts:
