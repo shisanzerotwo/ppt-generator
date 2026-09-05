@@ -180,17 +180,16 @@ def _pause_gate(step: str, label: str):
             state["phase"] = "images" if step == "outline" else "designing"
 
 
-IMAGE_CACHE_DIR = os.path.join(IMAGES_DIR, "cache")
+def _image_cache_path(title: str, prompt: str, points) -> str:
+    """配图缓存 key：同页题+同提示词+同要点的图只生成一次（省生图额度）。
 
-
-def _image_cache_path(title: str, prompt: str) -> str:
-    """配图缓存 key：同页题+同提示词的图只生成一次（省生图额度）。
-
-    key 掺入 title——critic 校验的是"图 vs 本页题文"，只按 prompt 匹配会让
-    异页文案错配同一张图。
+    key 掺 title 与 points——critic 校验的是"图 vs 本页题文"（审计 L6：只按
+    prompt 匹配，异页或改要点后会错配同一张图）。路径运行时从 IMAGES_DIR 拼，
+    不用模块常量：测试 monkeypatch IMAGES_DIR 时缓存才跟着走（审计 M2）。
     """
-    key = hashlib.md5(f"{title}|{prompt}".encode("utf-8")).hexdigest()
-    return os.path.join(IMAGE_CACHE_DIR, f"{key}.png")
+    pts = "|".join(str(p) for p in (points or []))
+    key = hashlib.md5(f"{title}|{prompt}|{pts}".encode("utf-8")).hexdigest()
+    return os.path.join(IMAGES_DIR, "cache", f"{key}.png")
 
 
 def _gen_image_page(i: int):
@@ -207,15 +206,19 @@ def _gen_image_page(i: int):
         _log(f"页 {i + 1}：无配图提示词，跳过")
         return
     path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
-    cache_path = _image_cache_path(s.get("title", ""), prompt)
+    cache_path = _image_cache_path(s.get("title", ""), prompt, s.get("points"))
     if os.path.exists(cache_path):
-        shutil.copyfile(cache_path, path)
-        with lock:
-            state["slides"][i]["image"] = f"/images/slide_{i}.png"
-            state["slides"][i]["imageStatus"] = "done"
-            state["slides"][i]["review"] = {"ok": True, "reason": "", "tries": 0}
-        _log(f"页 {i + 1}：命中配图缓存，直接复用")
-        return
+        try:
+            shutil.copyfile(cache_path, path)
+        except OSError:
+            pass  # 缓存读失败（被占用/被删）降级为现场生成，不炸整单（审计 L10）
+        else:
+            with lock:
+                state["slides"][i]["image"] = f"/images/slide_{i}.png"
+                state["slides"][i]["imageStatus"] = "done"
+                state["slides"][i]["review"] = {"ok": True, "reason": "", "tries": 0}
+            _log(f"页 {i + 1}：命中配图缓存，直接复用")
+            return
     review = {"ok": True, "reason": "", "tries": 0}
     for attempt in range(3):
         try:
@@ -229,9 +232,12 @@ def _gen_image_page(i: int):
                 state["slides"][i]["review"] = review
             if rv["ok"]:
                 if attempt == 0:
-                    # 只缓存首轮过审的图：带 advice 改词重生的图与缓存 key 的原 prompt 不再对应
-                    os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
-                    shutil.copyfile(path, cache_path)
+                    # 只缓存首轮过审的图：带 advice 改词重生的图与缓存 key 的原 prompt 不再对应。
+                    # tmp+replace 原子落盘，防并发写同 key 留半截文件被后续命中（审计 L1）
+                    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                    tmp = cache_path + ".tmp"
+                    shutil.copyfile(path, tmp)
+                    os.replace(tmp, cache_path)
                 _log(f"页 {i + 1} 图片完成（校验契合）")
                 break
             if attempt < 2:
@@ -305,8 +311,8 @@ def _generation_worker(content: str, from_text: bool = False):
                 state["style_name"] = chosen.get("name", "")
             reason = f"（{chosen['reason']}）" if chosen.get("reason") else ""
             _log(f"AI 选定风格：{chosen.get('name')} {reason}")
+        t_style_done = time.time()  # gate 前取点：用户在分步确认停留的时长不计入阶段耗时（审计 L7）
         _pause_gate("outline", "大纲与风格")
-        t_style_done = time.time()
         _log("开始逐页生图")
         _phase("images")
 
@@ -879,8 +885,8 @@ def api_projects_load():
             return jsonify({"error": "正在生成中，无法载入"}), 409
         html_path = payload.get("html_path")
         if html_path and not os.path.isfile(
-                os.path.join(DECKS_DIR, os.path.basename(html_path))):
-            html_path = None  # 设计稿已不在，可重新设计
+                os.path.join(DECKS_DIR, os.path.basename(unquote(html_path)))):
+            html_path = None  # 设计稿已不在，可重新设计（unquote 同审计 B：存量是编码名）
         state.update({
             "topic": payload.get("topic", ""), "style": payload.get("style"),
             "style_name": payload.get("style_name", ""), "brand": payload.get("brand"),
@@ -1008,11 +1014,11 @@ def api_theme():
         return jsonify({"error": "该设计稿不含 CSS 变量（旧版生成），请重新生成后再换色"}), 409
     block = m.group(1)
     for key, val in updates.items():
-        block, n = re.subn(rf"(--{key}\s*:\s*)#[0-9a-fA-F]{{3,8}}", rf"\g<1>{val}", block)
+        block, n = re.subn(rf"(--{key}\s*:\s*)#[0-9a-fA-F]{{3,8}}(?![0-9a-fA-F])", rf"\g<1>{val}", block)
         if n == 0:
             return jsonify({"error": f"设计稿未定义 --{key} 变量，无法替换"}), 409
     doc = doc[:m.start(1)] + block + doc[m.end(1):]
-    tmp = local + ".tmp"
+    tmp = f"{local}.tmp{threading.get_ident()}"  # 线程唯一 tmp，防并发 theme 互踩半截文件（审计 L2）
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(doc)
     os.replace(tmp, local)

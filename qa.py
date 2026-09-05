@@ -223,6 +223,9 @@ def _check_text_overflow(slide_no: int, shape, warnings: list):
         size = _para_font_size(para)
         lines = measure_text_lines(para.text, size, inner_w)
         needed += lines * size * LINE_HEIGHT_FACTOR
+        # 段前/段后距必须计入：builder 要点标题段 space_before=20pt 高频使用，
+        # 漏加会让"行高勉强够+段距多"的页系统性漏报（审计 M1）
+        needed += _to_pt(para.space_before or 0) + _to_pt(para.space_after or 0)
     if needed > inner_h + OVERFLOW_TOLERANCE_PT:
         preview = text.replace("\n", " ")[:20]
         warnings.append(
