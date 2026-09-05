@@ -77,6 +77,17 @@ a.side-item:hover { color:var(--fg); }
                          font-size:12px; color:var(--faint); }
 .art-kind { font-size:10px; font-family:var(--mono); color:var(--muted);
             border:1px solid var(--border); border-radius:4px; padding:0 4px; flex-shrink:0; }
+/* 模板 / 风格选择 */
+.tpl-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px; }
+.tpl-chip { display:flex; align-items:center; gap:6px; padding:6px 8px; cursor:pointer;
+            border:1px solid var(--border); border-radius:var(--r); background:var(--bg);
+            font-size:12px; color:var(--fg); transition:border-color var(--t); text-align:left; }
+.tpl-chip:hover { border-color:var(--accent); }
+.tpl-chip.on { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+.tpl-sw { width:14px; height:14px; border-radius:4px; flex-shrink:0; }
+.tpl-chip .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tpl-current { font-size:11.5px; color:var(--muted); padding:4px 2px; }
+.tpl-current b { color:var(--accent); }
 .side-foot { border-top:1px solid var(--border); padding:10px 12px; }
 .workspace { flex:1; min-width:0; display:flex; flex-direction:column; }
 /* ===== 顶栏（瘦身：仅输入 + 生成）===== */
@@ -356,6 +367,18 @@ a.side-item:hover { color:var(--fg); }
   <details class="side-grp">
     <summary class="side-label">导出产物</summary>
     <div class="grp-body" id="artifact-list"></div>
+  </details>
+  <details class="side-grp" open>
+    <summary class="side-label">模板 / 风格</summary>
+    <div class="grp-body">
+      <div id="tpl-list" class="tpl-grid"></div>
+      <button class="side-item" id="tpl-import-btn" onclick="document.getElementById('tpl-file').click()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l4.5-6 3.5 4 2.5-3 5.5 5M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+        <span class="txt">导入参考稿识别</span>
+      </button>
+      <input type="file" id="tpl-file" accept=".png,.jpg,.jpeg,.webp,.html" hidden onchange="analyzeReference(this)">
+      <div class="tpl-current" id="tpl-current">当前：AI 自动选风格</div>
+    </div>
   </details>
   <div class="side-label">品牌模板</div>
   <div class="side-sec brand-sec">
@@ -661,7 +684,8 @@ async function refresh() {
   $('workarea').classList.toggle('split', s.slides.length > 0 && !!s.html_path);
 
   renderStages(s.phase);
-  renderStyleBadge(s.style_name);
+  renderStyleBadge(s);
+  renderTplCurrent(s);
   $('stepwise-chk').checked = !!s.stepwise;
   renderLog(s.log);
   renderReviewBanner(s);
@@ -722,11 +746,73 @@ function renderStages(phase) {
   $('bar').style.width = (PHASE_PCT[phase] ?? 0) + '%';
 }
 
-function renderStyleBadge(name) {
+function renderStyleBadge(s) {
   const b = $('style-badge');
+  const name = s.style_name;
   if (!name) { b.style.display = 'none'; return; }
-  b.textContent = 'AI 风格 · ' + name;
+  // 区分来源：用了模板/参考稿 vs AI 自动选
+  b.textContent = (s.tpl_style_name ? '模板 · ' : 'AI 风格 · ') + name;
   b.style.display = 'inline-flex';
+}
+
+let templatesCache = [];
+
+async function loadTemplates() {
+  try {
+    const r = await fetch('/api/templates');
+    templatesCache = (await r.json()).templates || [];
+    renderTemplateList('');
+  } catch (e) { /* 模板列表失败不影响主流程 */ }
+}
+
+function renderTemplateList(activeKey) {
+  $('tpl-list').innerHTML = templatesCache.map(t =>
+    `<button class="tpl-chip ${t.key === activeKey ? 'on' : ''}" data-tpl="${esc(t.key)}"
+       title="${esc(t.name)}·${esc(t.mood)}">
+       <span class="tpl-sw" style="background:${esc(t.accent)};border:1px solid ${esc(t.bg)}"></span>
+       <span class="txt">${esc(t.name)}</span></button>`).join('');
+}
+
+function renderTplCurrent(s) {
+  const el = $('tpl-current');
+  if (!el) return;
+  if (s.tpl_style_name) {
+    el.innerHTML = `当前模板：<b>${esc(s.tpl_style_name)}</b>（点选中项可取消）`;
+  } else {
+    el.textContent = '当前：AI 自动选风格';
+  }
+  // 同步选中态：仅当模板来源是内置库（key 命中）才高亮
+  const activeKey = templatesCache.some(t => t.name === s.tpl_style_name) ? templatesCache.find(t => t.name === s.tpl_style_name).key : '';
+  renderTemplateList(activeKey);
+}
+
+async function selectTemplate(key, isActive) {
+  // 再点已选中的 → 取消（传空回到 AI 自动）
+  const {ok, data} = await post('/api/template/select', {key: isActive ? null : key});
+  if (!ok) { toast(data.error || '模板选择失败'); return; }
+  toast(isActive ? '已取消模板，回到 AI 自动选风格'
+                 : '已选模板，下次生成生效', 4000);
+  refresh();
+}
+
+async function analyzeReference(input) {
+  const file = input.files[0];
+  if (!file) return;
+  toast('AI 正在识别参考稿风格…');
+  let ok, data;
+  if (file.name.toLowerCase().endsWith('.html')) {
+    const html = await file.text();
+    ({ok, data} = await post('/api/template/analyze', {html}));
+  } else {
+    const fd = new FormData();
+    fd.append('file', file);
+    const r = await fetch('/api/template/analyze', {method: 'POST', body: fd});
+    ok = r.ok; data = await r.json();
+  }
+  input.value = '';
+  if (!ok) { toast(data.error || '识别失败', 5000); return; }
+  toast(`已识别参考稿风格：${data.tpl_style_name}（主色 ${data.accent}）`, 6000);
+  refresh();
 }
 
 function renderLog(log) {
@@ -823,7 +909,9 @@ $('sidebar').addEventListener('click', e => {
   const deck = e.target.closest('button[data-deck]');
   if (deck) { openDeckViewer(deck.dataset.deck, deck.dataset.title, deck.dataset.when); return; }
   const proj = e.target.closest('button[data-project]');
-  if (proj) loadProject(proj.dataset.project);
+  if (proj) { loadProject(proj.dataset.project); return; }
+  const tpl = e.target.closest('button[data-tpl]');
+  if (tpl) selectTemplate(tpl.dataset.tpl, tpl.classList.contains('on'));
 });
 $('cards').addEventListener('click', e => {
   const img = e.target.closest('.img-area img[data-full]');
@@ -1113,6 +1201,7 @@ refresh();
 loadDecks();
 loadProjects();
 loadArtifacts();
+loadTemplates();
 bindSelectionCapture();
 // Ctrl/⌘+J 呼出或收起 AI 协作面板
 document.addEventListener('keydown', e => {

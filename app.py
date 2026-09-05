@@ -15,6 +15,7 @@ import html_gen
 import image_gen
 import outline
 import style as style_mod
+import template as template_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -29,6 +30,8 @@ state = {
     "style": None,    # AI 选定的风格 key（style.STYLE_LIBRARY）
     "style_name": "", # AI 选定风格名（前端展示）
     "brand": None,    # 品牌模板 {name, color}，用户自定义后覆盖风格强调色（路线图 #6）
+    "tpl_style": None,  # 用户指定的模板风格 dict（内置选择/参考稿识别）；优先于 AI 自动选
+    "tpl_style_name": "",  # 当前模板来源名（前端展示）
     "slides": [],     # {title, points, image_prompt, image, imageStatus}
     "html_path": None,  # AI 自主设计的 HTML 主产物（web 路径 /decks/xxx.html）
     "await_step": None,  # 分步确认时正在等待放行的步骤："outline" / "design" / None
@@ -116,7 +119,8 @@ def _design_and_save():
     with lock:
         slides = [dict(s) for s in state["slides"]]
         topic = state["topic"]
-        chosen_style = style_mod.STYLE_LIBRARY.get(state.get("style"))
+        # 模板风格（内置/参考稿）优先；否则用 AI 选定 key 从风格库取
+        chosen_style = state.get("tpl_style") or style_mod.STYLE_LIBRARY.get(state.get("style"))
         brand = state.get("brand")
     if brand:
         chosen_style = _apply_brand(chosen_style, brand)
@@ -235,15 +239,22 @@ def _generation_worker(content: str, from_text: bool = False):
                 for s in slides
             ]
         _log(f"大纲完成，共 {len(slides)} 页，AI 正在判断视觉风格")
-        # 智能选风格：AI 根据主题/内容从风格库中自主判断（ppt-maker skill 规范）
+        # 风格来源：用户指定的模板（内置/参考稿）优先，否则 AI 从风格库自动选
         with lock:
             cur_topic = state["topic"]
-        chosen = style_mod.decide_style(cur_topic, slides)
-        with lock:
-            state["style"] = chosen.get("key")
-            state["style_name"] = chosen.get("name", "")
-        reason = f"（{chosen['reason']}）" if chosen.get("reason") else ""
-        _log(f"AI 选定风格：{chosen.get('name')} {reason}")
+            tpl = state.get("tpl_style")
+        if tpl:
+            with lock:
+                state["style"] = tpl.get("key")
+                state["style_name"] = tpl.get("name", "")
+            _log(f"使用模板风格：{tpl.get('name')}")
+        else:
+            chosen = style_mod.decide_style(cur_topic, slides)
+            with lock:
+                state["style"] = chosen.get("key")
+                state["style_name"] = chosen.get("name", "")
+            reason = f"（{chosen['reason']}）" if chosen.get("reason") else ""
+            _log(f"AI 选定风格：{chosen.get('name')} {reason}")
         _pause_gate("outline", "大纲与风格")
         _log("开始逐页生图")
         _phase("images")
@@ -808,6 +819,62 @@ def api_brand():
     with lock:
         state["brand"] = brand
     return jsonify({"ok": True, "brand": brand})
+
+
+@app.route("/api/templates")
+def api_templates():
+    """列出内置模板（供界面选择）。"""
+    return jsonify({"templates": template_mod.builtin_templates()})
+
+
+@app.route("/api/template/select", methods=["POST"])
+def api_template_select():
+    """选内置模板存入 tpl_style；key 为空则清除，回到 AI 自动选风格。"""
+    data = request.get_json(force=True) if request.data else {}
+    key = data.get("key")
+    with lock:
+        if state["phase"] not in ("idle", "ready"):
+            return jsonify({"error": "正在生成中，请等待完成"}), 409
+    if not key:
+        with lock:
+            state["tpl_style"] = None
+            state["tpl_style_name"] = ""
+        return jsonify({"ok": True, "tpl_style_name": ""})
+    st = template_mod.get_template_style(key)
+    if not st:
+        return jsonify({"error": "模板不存在"}), 404
+    with lock:
+        state["tpl_style"] = st
+        state["tpl_style_name"] = st["name"]
+    return jsonify({"ok": True, "tpl_style_name": st["name"]})
+
+
+@app.route("/api/template/analyze", methods=["POST"])
+def api_template_analyze():
+    """上传参考稿（图片 multipart 或 {html} 文本）→ AI 识别风格 → 存 tpl_style。"""
+    with lock:
+        if state["phase"] not in ("idle", "ready"):
+            return jsonify({"error": "正在生成中，请等待完成"}), 409
+    f = request.files.get("file")
+    if f is not None:
+        raw = f.read()
+        if len(raw) > 8 * 1024 * 1024:
+            return jsonify({"error": "图片过大（上限 8MB）"}), 400
+        st = template_mod.analyze_reference("image", raw)
+    else:
+        data = request.get_json(force=True) if request.data else {}
+        html = (data.get("html") or "").strip()
+        if len(html) < 30:
+            return jsonify({"error": "请上传参考图片，或粘贴足够长的 HTML"}), 400
+        st = template_mod.analyze_reference("html", html)
+    if not st:
+        return jsonify({"error": "未能识别参考稿风格，请换一张更清晰的设计图"}), 422
+    with lock:
+        state["tpl_style"] = st
+        state["tpl_style_name"] = st["name"]
+    _log(f"参考稿识别完成：{st['name']}（主色 {st['accent']}）")
+    return jsonify({"ok": True, "tpl_style_name": st["name"],
+                    "accent": st["accent"], "bg": st["bg"]})
 
 
 @app.route("/images/<path:filename>")
