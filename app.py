@@ -20,6 +20,8 @@ import llm_util
 import outline
 import qa as qa_mod
 import quality as quality_mod
+import shot as shot_mod
+import anim as anim_mod
 import style as style_mod
 import template as template_mod
 import uploads as uploads_mod
@@ -29,6 +31,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 IMAGES_DIR = os.path.join(OUTPUT_DIR, "images")
 DECKS_DIR = os.path.join(OUTPUT_DIR, "decks")
 PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
+ANIMATION_DIR = os.path.join(OUTPUT_DIR, "animation")
 
 state = {
     "topic": "",
@@ -1202,6 +1205,40 @@ def api_theme():
     return jsonify({"ok": True, "applied": updates})
 
 
+@app.route("/api/export_animation", methods=["POST"])
+def api_export_animation():
+    """阶段一：设计稿逐页截图（16:9 1280×720）→ 零依赖 Ken Burns 动画播放器。
+
+    纯本地渲染，零 LLM 调用。
+    """
+    with lock:
+        if state["phase"] not in ("ready", "review"):
+            return jsonify({"error": "请先生成 PPT，再导出动画"}), 409
+        html_path = state.get("html_path")
+        if not html_path:
+            return jsonify({"error": "当前没有设计稿"}), 409
+        local = os.path.join(DECKS_DIR, os.path.basename(unquote(html_path)))
+        topic = state["topic"]
+    if not os.path.isfile(local):
+        return jsonify({"error": "设计稿文件已不存在"}), 404
+    name = os.path.splitext(os.path.basename(local))[0]
+    out_dir = os.path.join(ANIMATION_DIR, name)
+    try:
+        shots = shot_mod.shot_deck(local, out_dir)
+    except Exception as e:
+        return jsonify({"error": f"截图失败：{e}"}), 500
+    player = anim_mod.build_player(out_dir, shots, title=topic)
+    _log(f"已导出动画：{len(shots)} 页（16:9），见 /animation/{name}/index.html")
+    return jsonify({"ok": True, "path": f"/animation/{name}/index.html",
+                    "pages": len(shots)})
+
+
+@app.route("/animation/<path:filename>")
+def animation_files(filename):
+    """动画播放器与其图片目录（output/animation/<稿名>/index.html + slide_N.png）。"""
+    return send_from_directory(ANIMATION_DIR, filename)
+
+
 @app.route("/images/<path:filename>")
 def images(filename):
     return send_from_directory(IMAGES_DIR, filename)
@@ -1244,6 +1281,16 @@ def api_artifacts():
                 continue
             items.append({"name": name, "kind": "html", "url": f"/decks/{quote(name)}",
                           "mtime": mtime})
+    if os.path.isdir(ANIMATION_DIR):
+        for name in os.listdir(ANIMATION_DIR):
+            player = os.path.join(ANIMATION_DIR, name, "index.html")
+            if os.path.isfile(player):
+                try:
+                    mtime = os.path.getmtime(player)
+                except OSError:
+                    continue
+                items.append({"name": f"{name}（动画）", "kind": "anim",
+                              "url": f"/animation/{quote(name)}/index.html", "mtime": mtime})
     items.sort(key=lambda x: x["mtime"], reverse=True)
     for it in items:
         stem = it["name"].rsplit(".", 1)[0]
