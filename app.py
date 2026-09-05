@@ -233,11 +233,15 @@ def _gen_image_page(i: int):
             if rv["ok"]:
                 if attempt == 0:
                     # 只缓存首轮过审的图：带 advice 改词重生的图与缓存 key 的原 prompt 不再对应。
-                    # tmp+replace 原子落盘，防并发写同 key 留半截文件被后续命中（审计 L1）
-                    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                    tmp = cache_path + ".tmp"
-                    shutil.copyfile(path, tmp)
-                    os.replace(tmp, cache_path)
+                    # tmp+replace 原子落盘，防并发写同 key 留半截文件被后续命中（审计 L1）；
+                    # 缓存是优化不是职责，写失败只记日志、绝不影响本页结果
+                    try:
+                        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                        tmp = cache_path + ".tmp"
+                        shutil.copyfile(path, tmp)
+                        os.replace(tmp, cache_path)
+                    except OSError as ce:
+                        _log(f"页 {i + 1}：缓存写入失败，跳过缓存：{ce}")
                 _log(f"页 {i + 1} 图片完成（校验契合）")
                 break
             if attempt < 2:
