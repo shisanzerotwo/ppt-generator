@@ -6,7 +6,7 @@ import os
 
 from zhipuai import ZhipuAI
 
-from llm_util import TEXT_MODEL, VISION_MODEL, llm_client
+from llm_util import get_model, llm_client
 
 from outline import _extract_json, _normalize
 
@@ -34,7 +34,7 @@ def review_image(title: str, points: list[str], image_path: str) -> dict:
             "第二行：一句话原因（若契合也简要说明画面内容）"
         )
         resp = _client().chat.completions.create(
-            model=VISION_MODEL,
+            model=get_model("vision"),
             messages=[{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
                 {"type": "text", "text": prompt},
@@ -55,7 +55,7 @@ def review_image(title: str, points: list[str], image_path: str) -> dict:
 def _ask(prompt: str) -> str:
     """文本模型单轮调用（定点改写用）。"""
     resp = _client().chat.completions.create(
-        model=TEXT_MODEL,
+        model=get_model("chat"),
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )
@@ -148,7 +148,7 @@ def refine_outline(slides: list[dict], instruction: str) -> list[dict]:
         "4. 只输出 JSON 数组，不要输出其他文字"
     )
     resp = _client().chat.completions.create(
-        model=TEXT_MODEL,
+        model=get_model("chat"),
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )

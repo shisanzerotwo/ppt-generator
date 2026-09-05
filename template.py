@@ -13,7 +13,7 @@ import uuid
 from zhipuai import ZhipuAI
 
 import style as style_mod
-from llm_util import TEXT_MODEL, VISION_MODEL, llm_client
+from llm_util import get_model, llm_client
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -203,7 +203,7 @@ def analyze_reference(kind: str, data) -> dict | None:
         if kind == "image":
             b64 = base64.b64encode(data).decode()
             resp = _client().chat.completions.create(
-                model=VISION_MODEL,
+                model=get_model("vision"),
                 messages=[{"role": "user", "content": [
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
                     {"type": "text", "text": _ASK},
@@ -212,7 +212,7 @@ def analyze_reference(kind: str, data) -> dict | None:
             )
         else:
             resp = _client().chat.completions.create(
-                model=TEXT_MODEL,
+                model=get_model("chat"),
                 messages=[{"role": "user", "content":
                            f"下面是一份网页/幻灯片的 HTML/CSS：\n{str(data)[:6000]}\n\n{_ASK}"}],
                 max_tokens=400,

@@ -10,7 +10,7 @@ import os
 
 from dotenv import load_dotenv
 
-from llm_util import llm_client
+from llm_util import get_model, llm_client
 
 load_dotenv()
 
@@ -84,7 +84,7 @@ def _ensure_print_css(html: str) -> str:
 def _call_llm(prompt: str) -> str:
     # 设计任务输出量大（实测 129~200s），复用公共 client 但给 300s 长超时（审计 M1）
     client = llm_client(300.0)
-    model = os.getenv("ZHIPUAI_DESIGN_MODEL") or os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash"
+    model = get_model("design")  # 设计档：界面覆盖 > 跟随对话档 > .env DESIGN/CHAT > 默认
     resp = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],

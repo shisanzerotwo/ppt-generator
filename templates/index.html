@@ -88,6 +88,15 @@ a.side-item:hover { color:var(--fg); }
 .tpl-chip .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tpl-del { margin-left:auto; color:var(--muted); font-size:13px; line-height:1; padding:2px 4px; border-radius:4px; flex-shrink:0; }
 .tpl-del:hover { color:#e5484d; background:rgba(229,72,77,.12); }
+.model-grid { display:flex; flex-direction:column; gap:6px; padding:6px 2px; }
+.model-grid label { display:flex; flex-direction:column; gap:3px; font-size:11.5px; color:var(--muted); }
+.model-grid input { padding:5px 8px; border:1px solid var(--border,#2a3548); border-radius:6px;
+  background:transparent; color:inherit; font-size:12px; }
+.model-grid input:focus { outline:none; border-color:var(--accent); }
+.model-btns { display:flex; gap:6px; }
+.model-btns .side-item { flex:1; justify-content:center; font-size:12px; }
+#model-panel summary { cursor:pointer; font-size:12.5px; padding:6px 8px; color:var(--muted); }
+#model-panel summary:hover { color:var(--accent); }
 .tpl-current { font-size:11.5px; color:var(--muted); padding:4px 2px; }
 .tpl-current b { color:var(--accent); }
 .side-foot { border-top:1px solid var(--border); padding:10px 12px; }
@@ -383,6 +392,19 @@ a.side-item:hover { color:var(--fg); }
         💾 存当前设计稿为模板
       </button>
       <div class="tpl-current" id="tpl-current">当前：AI 自动选风格</div>
+      <details class="side-item" id="model-panel" ontoggle="if(this.open)loadModels()">
+        <summary title="切换对话/视觉/生图模型，保存后立即生效">⚙ 模型设置</summary>
+        <div class="model-grid">
+          <label>对话 / 大纲<input id="model-chat" placeholder="agnes-2.0-flash" spellcheck="false"></label>
+          <label>视觉 / 审稿<input id="model-vision" placeholder="agnes-2.5-pro" spellcheck="false"></label>
+          <label>生图<input id="model-image" placeholder="agnes-image-2.5-flash" spellcheck="false"></label>
+          <div class="model-btns">
+            <button class="side-item" onclick="saveModels()">保存并生效</button>
+            <button class="side-item" onclick="resetModels()">恢复默认</button>
+          </div>
+          <div class="tpl-current" id="model-current"></div>
+        </div>
+      </details>
     </div>
   </details>
   <div class="side-label">品牌模板</div>
@@ -799,6 +821,33 @@ async function selectTemplate(key, isActive) {
   toast(isActive ? '已取消模板，回到 AI 自动选风格'
                  : '已选模板，下次生成生效', 4000);
   refresh();
+}
+
+async function loadModels() {
+  try {
+    const d = await (await fetch('/api/models')).json();
+    $('model-chat').value = d.models.chat || '';
+    $('model-vision').value = d.models.vision || '';
+    $('model-image').value = d.models.image || '';
+    const n = Object.keys(d.overrides || {}).length;
+    $('model-current').textContent = n ? `已自定义 ${n} 档（保存后立即生效，无需重启）` : '当前使用 .env 默认配置';
+  } catch (e) { /* 模型面板失败不影响主流程 */ }
+}
+
+async function saveModels() {
+  const body = {chat: $('model-chat').value.trim(), vision: $('model-vision').value.trim(),
+                image: $('model-image').value.trim()};
+  const {ok, data} = await post('/api/models', body);
+  if (!ok) { toast(data.error || '保存失败'); return; }
+  toast('模型已切换，立即生效', 4000);
+  loadModels();
+}
+
+async function resetModels() {
+  const {ok, data} = await post('/api/models', {chat: '', vision: '', image: ''});
+  if (!ok) { toast(data.error || '重置失败'); return; }
+  toast('已恢复 .env 默认模型');
+  loadModels();
 }
 
 async function saveCurrentAsTemplate() {

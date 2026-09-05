@@ -171,8 +171,8 @@ def _client():
     if not api_key or api_key == "your-key-here":
         raise RuntimeError("未配置 ZHIPUAI_API_KEY，请复制 .env.example 为 .env 并填入 Key")
     base_url = os.getenv("ZHIPUAI_BASE_URL") or None
-    model = os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash"
-    return ZhipuAI(api_key=api_key, base_url=base_url, timeout=60.0), model
+    from llm_util import get_model
+    return ZhipuAI(api_key=api_key, base_url=base_url, timeout=60.0), get_model("chat")
 
 
 _CONTENT_LAYOUT_ROTATION = ["image-right", "cards", "image-left", "columns", "image-top", "center", "image-full"]

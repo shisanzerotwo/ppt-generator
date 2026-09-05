@@ -1,5 +1,6 @@
 .env
 output/
+runtime_config.json
 __pycache__/
 .venv/
 server.log

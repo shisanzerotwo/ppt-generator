@@ -16,6 +16,7 @@ import builder
 import critic
 import html_gen
 import image_gen
+import llm_util
 import outline
 import qa as qa_mod
 import quality as quality_mod
@@ -1105,6 +1106,37 @@ def api_quality():
     with lock:
         slides = [dict(s) for s in state["slides"]]
     return jsonify(quality_mod.check_deck(slides))
+
+
+_MODEL_RE = re.compile(r"^[A-Za-z0-9._\-/:]{1,80}$")  # 模型名白名单：进 LLM 请求参数，不进任何文件路径
+
+
+@app.route("/api/models", methods=["GET"])
+def api_models_get():
+    """当前三档模型（对话/视觉/生图；设计档自动跟随对话档）+ 已覆盖项。"""
+    models = {k: llm_util.get_model(k) for k in ("chat", "vision", "image")}
+    overrides = {k: v for k, v in llm_util._load_runtime().items() if k in models}
+    return jsonify({"models": models, "overrides": overrides})
+
+
+@app.route("/api/models", methods=["POST"])
+def api_models_set():
+    """切换模型：即改即生效（每次调用运行时解析），空值=该档恢复 .env 默认。"""
+    data = request.get_json(force=True) if request.data else {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "请求体需为 JSON 对象"}), 400
+    updates = {}
+    for k in ("chat", "vision", "image"):
+        if k not in data:
+            continue
+        v = str(data.get(k) or "").strip()
+        if v and not _MODEL_RE.match(v):
+            return jsonify({"error": f"{k} 模型名只能含字母数字与 ._-/:（≤80 字符）"}), 400
+        updates[k] = v
+    cfg = llm_util.set_runtime_models(updates)
+    applied = {k: llm_util.get_model(k) for k in ("chat", "vision", "image")}
+    _log(f"模型已切换：{'、'.join(f'{k}={v}' for k, v in applied.items())}")
+    return jsonify({"ok": True, "models": applied, "overrides": cfg})
 
 
 _HEX6 = re.compile(r"^#[0-9a-fA-F]{6}$")
