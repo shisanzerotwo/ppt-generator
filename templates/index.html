@@ -170,6 +170,18 @@ a.side-item:hover { color:var(--fg); }
 #log b { color:var(--faint); font-weight:400; margin-right:7px; }
 /* ===== AI 设计稿预览 ===== */
 #deck-preview { margin-bottom:20px; }
+/* 左右分栏工作区：左编辑、右放映（结果出来后启用） */
+.workarea { margin-top:4px; }
+.workarea.split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+                  gap:22px; align-items:start; }
+.workarea.split .col-show { position:sticky; top:24px; }
+.workarea.split .col-show #deck-preview { margin-bottom:0; }
+.workarea.split .deck-frame { height:calc(100vh - 96px); }
+@media (max-width:1100px) {
+  .workarea.split { grid-template-columns:1fr; }
+  .workarea.split .col-show { position:static; order:-1; }  /* 窄屏放映挪到上方 */
+  .workarea.split .deck-frame { height:60vh; }
+}
 .sec-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .sec-head h3 { margin:0; font-size:13px; font-weight:600; letter-spacing:.02em;
                color:var(--muted); display:flex; align-items:center; gap:7px; }
@@ -424,16 +436,22 @@ a.side-item:hover { color:var(--fg); }
         <button class="chip" onclick="useExample(this)">如何做好时间管理</button>
       </div>
     </div>
-    <div id="deck-preview"></div>
-    <div class="refine" id="refine-bar" hidden>
-      <label class="field">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-        <input id="instruction" placeholder="对话修改，如：第 3 页更简洁 / 整篇换商务风格" onkeydown="if(event.key==='Enter')doRefine()">
-      </label>
-      <button class="btn btn-ghost" id="btn-refine" onclick="doRefine()" disabled>应用修改</button>
-      <button class="btn btn-ghost" id="btn-add-slide" onclick="addSlide()" disabled title="在末尾加一页">+ 加页</button>
+    <div class="workarea" id="workarea">
+      <div class="col-edit">
+        <div class="refine" id="refine-bar" hidden>
+          <label class="field">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            <input id="instruction" placeholder="对话修改，如：第 3 页更简洁 / 整篇换商务风格" onkeydown="if(event.key==='Enter')doRefine()">
+          </label>
+          <button class="btn btn-ghost" id="btn-refine" onclick="doRefine()" disabled>应用修改</button>
+          <button class="btn btn-ghost" id="btn-add-slide" onclick="addSlide()" disabled title="在末尾加一页">+ 加页</button>
+        </div>
+        <div id="cards"></div>
+      </div>
+      <div class="col-show">
+        <div id="deck-preview"></div>
+      </div>
     </div>
-    <div id="cards"></div>
   </main>
 </div>
 </div>
@@ -639,6 +657,8 @@ async function refresh() {
   $('progress').hidden = (s.phase === 'idle' && !s.log.length);
   $('hero').hidden = working || s.slides.length > 0;
   $('refine-bar').hidden = !s.slides.length;
+  // 有结果才分左右两栏：左编辑右放映；无结果时单栏（编辑区空、放映区空）
+  $('workarea').classList.toggle('split', s.slides.length > 0 && !!s.html_path);
 
   renderStages(s.phase);
   renderStyleBadge(s.style_name);
