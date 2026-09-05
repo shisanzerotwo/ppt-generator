@@ -7,7 +7,8 @@ from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
+from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
 SLIDE_W = Inches(13.333)
@@ -55,7 +56,24 @@ def _fit_body_size(points) -> int:
     return 13
 
 
+def _set_ea(run, font=FONT):
+    """给 run 补写 a:ea（东亚字体）。
+
+    python-pptx 的 run.font.name 只写 a:latin，中文属于东亚文字范围，机器上按
+    a:ea 匹配字体；缺 a:ea 时中文会回退用户机器的默认字体（如宋体），版式失真。
+    a:ea 在 rPr 子元素里必须排在 a:latin 之后——font.name 已先写好 a:latin，
+    且 run 的 rPr 中不存在 a:cs/sym/hlink 等后续元素，这里直接 append 即满足顺序。
+    """
+    rPr = run._r.get_or_add_rPr()
+    ea = rPr.find(qn("a:ea"))
+    if ea is None:
+        ea = rPr.makeelement(qn("a:ea"), {})
+        rPr.append(ea)
+    ea.set("typeface", font)
+
+
 def _set_text(frame, text, size, color, bold=False, align=PP_ALIGN.LEFT, font=FONT):
+    frame.auto_size = MSO_AUTO_SIZE.NONE  # 显式禁用自动调整，防止 PowerPoint 打开时文本框自动长高
     p = frame.paragraphs[0]
     p.alignment = align
     run = p.add_run()
@@ -64,6 +82,7 @@ def _set_text(frame, text, size, color, bold=False, align=PP_ALIGN.LEFT, font=FO
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.color.rgb = color
+    _set_ea(run, font)
     return p
 
 
@@ -98,6 +117,7 @@ def _add_toc(slide, title, items, t):
     box = slide.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.0), Inches(4.8))
     tf = box.text_frame
     tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.NONE
     for i, it in enumerate(items):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.space_before = Pt(20)
@@ -107,6 +127,7 @@ def _add_toc(slide, title, items, t):
         run.font.size = Pt(22)
         run.font.color.rgb = t["fg"] if i == 0 else t["muted"]
         run.font.bold = (i == 0)
+        _set_ea(run)
 
 
 def _add_section(slide, title, points, t):
@@ -162,6 +183,7 @@ def _add_point_list(slide, points, left, top, width, height, t, start=0, title_s
     box = slide.shapes.add_textbox(left, top, width, height)
     tf = box.text_frame
     tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.NONE
     for i, pt in enumerate(points):
         title, desc = _split_point(pt)
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
@@ -172,6 +194,7 @@ def _add_point_list(slide, points, left, top, width, height, t, start=0, title_s
         run.font.size = Pt(title_size)
         run.font.bold = True
         run.font.color.rgb = t["accent"]
+        _set_ea(run)
         if desc:
             p2 = tf.add_paragraph()
             p2.space_before = Pt(2)
@@ -180,6 +203,7 @@ def _add_point_list(slide, points, left, top, width, height, t, start=0, title_s
             run2.font.name = FONT
             run2.font.size = Pt(desc_size)
             run2.font.color.rgb = t["muted"]
+            _set_ea(run2)
     return box
 
 
@@ -241,12 +265,14 @@ def _add_content_cards(slide, title, points, image_path, t):
         box = slide.shapes.add_textbox(x + Inches(0.3), Inches(3.1), card_w - Inches(0.6), Inches(3.0))
         tf = box.text_frame
         tf.word_wrap = True
+        tf.auto_size = MSO_AUTO_SIZE.NONE
         run = tf.paragraphs[0].add_run()
         run.text = title_text
         run.font.name = FONT
         run.font.size = Pt(16)
         run.font.bold = True
         run.font.color.rgb = t["fg"]
+        _set_ea(run)
         if desc:
             p2 = tf.add_paragraph()
             p2.space_before = Pt(6)
@@ -255,6 +281,7 @@ def _add_content_cards(slide, title, points, image_path, t):
             run2.font.name = FONT
             run2.font.size = Pt(12)
             run2.font.color.rgb = t["muted"]
+            _set_ea(run2)
 
 
 def _add_content_columns(slide, title, points, image_path, t):
@@ -270,6 +297,7 @@ def _add_content_center(slide, title, points, image_path, t):
     box = slide.shapes.add_textbox(Inches(1.5), Inches(3.8), Inches(10.3), Inches(2.4))
     tf = box.text_frame
     tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.NONE
     for i, pt in enumerate(points):
         title_text, desc = _split_point(pt)
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
@@ -280,6 +308,7 @@ def _add_content_center(slide, title, points, image_path, t):
         run.font.name = FONT
         run.font.size = Pt(22)
         run.font.color.rgb = t["muted"]
+        _set_ea(run)
 
 
 _CONTENT_LAYOUTS = {
@@ -394,6 +423,7 @@ def _add_compare(slide, title, points, t):
         box = slide.shapes.add_textbox(x, Inches(2.2), Inches(5.5), Inches(4.0))
         tf = box.text_frame
         tf.word_wrap = True
+        tf.auto_size = MSO_AUTO_SIZE.NONE
         for i, it in enumerate(items):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.space_before = Pt(14)
@@ -402,6 +432,7 @@ def _add_compare(slide, title, points, t):
             run.font.name = FONT
             run.font.size = Pt(16)
             run.font.color.rgb = t["muted"]
+            _set_ea(run)
 
 
 def _add_end(slide, title, t):

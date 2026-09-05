@@ -6,18 +6,12 @@
 
 import base64
 import json
-import os
 import re
 
-from dotenv import load_dotenv
 from zhipuai import ZhipuAI
 
 import style as style_mod
-
-load_dotenv()
-
-VISION_MODEL = os.getenv("ZHIPUAI_VISION_MODEL") or "agnes-2.5-pro"
-TEXT_MODEL = os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash"
+from llm_util import TEXT_MODEL, VISION_MODEL, llm_client
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -75,10 +69,7 @@ def _sanitize(raw: dict) -> dict:
 
 
 def _client() -> ZhipuAI:
-    api_key = os.getenv("ZHIPUAI_API_KEY")
-    if not api_key or api_key == "your-key-here":
-        raise RuntimeError("未配置 ZHIPUAI_API_KEY")
-    return ZhipuAI(api_key=api_key, base_url=os.getenv("ZHIPUAI_BASE_URL") or None, timeout=120.0)
+    return llm_client(120.0)
 
 
 _ASK = ("请分析这份演示/海报设计的视觉风格，只输出一个 JSON 对象："

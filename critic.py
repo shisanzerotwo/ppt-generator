@@ -4,22 +4,15 @@ import base64
 import json
 import os
 
-from dotenv import load_dotenv
 from zhipuai import ZhipuAI
+
+from llm_util import TEXT_MODEL, VISION_MODEL, llm_client
 
 from outline import _extract_json, _normalize
 
-load_dotenv()
-
-VISION_MODEL = os.getenv("ZHIPUAI_VISION_MODEL") or "agnes-2.5-pro"
-TEXT_MODEL = os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash"
-
 
 def _client() -> ZhipuAI:
-    api_key = os.getenv("ZHIPUAI_API_KEY")
-    if not api_key or api_key == "your-key-here":
-        raise RuntimeError("未配置 ZHIPUAI_API_KEY")
-    return ZhipuAI(api_key=api_key, base_url=os.getenv("ZHIPUAI_BASE_URL") or None, timeout=60.0)
+    return llm_client(60.0)
 
 
 def review_image(title: str, points: list[str], image_path: str) -> dict:

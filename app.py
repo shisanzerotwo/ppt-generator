@@ -1,10 +1,13 @@
 """可视化制作 Web 界面后端：python app.py 后浏览器打开 http://127.0.0.1:5000"""
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -14,8 +17,11 @@ import critic
 import html_gen
 import image_gen
 import outline
+import qa as qa_mod
+import quality as quality_mod
 import style as style_mod
 import template as template_mod
+import uploads as uploads_mod
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
@@ -53,8 +59,10 @@ def _phase(p: str):
 
 
 def _parse_upload(file) -> str:
-    """解析上传文件（docx/md/txt），返回纯文本。"""
+    """解析上传文件（pdf/docx/md/txt），返回纯文本。"""
     filename = (file.filename or "").lower()
+    if filename.endswith(".pdf"):
+        return uploads_mod.parse_pdf(file.read())
     if filename.endswith(".docx"):
         import docx
         from io import BytesIO
@@ -172,53 +180,95 @@ def _pause_gate(step: str, label: str):
             state["phase"] = "images" if step == "outline" else "designing"
 
 
+IMAGE_CACHE_DIR = os.path.join(IMAGES_DIR, "cache")
+
+
+def _image_cache_path(title: str, prompt: str) -> str:
+    """配图缓存 key：同页题+同提示词的图只生成一次（省生图额度）。
+
+    key 掺入 title——critic 校验的是"图 vs 本页题文"，只按 prompt 匹配会让
+    异页文案错配同一张图。
+    """
+    key = hashlib.md5(f"{title}|{prompt}".encode("utf-8")).hexdigest()
+    return os.path.join(IMAGE_CACHE_DIR, f"{key}.png")
+
+
+def _gen_image_page(i: int):
+    """单页生图 + 视觉校验闭环（提议者-审核者，不契合改词重生封顶 2 次）。
+
+    只读写 state["slides"][i]，页间无共享可变状态，可安全并发；写操作均持锁。
+    """
+    with lock:
+        s = dict(state["slides"][i])
+    prompt = s.get("image_prompt", "")
+    if not prompt:
+        with lock:
+            state["slides"][i]["imageStatus"] = "skipped"
+        _log(f"页 {i + 1}：无配图提示词，跳过")
+        return
+    path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
+    cache_path = _image_cache_path(s.get("title", ""), prompt)
+    if os.path.exists(cache_path):
+        shutil.copyfile(cache_path, path)
+        with lock:
+            state["slides"][i]["image"] = f"/images/slide_{i}.png"
+            state["slides"][i]["imageStatus"] = "done"
+            state["slides"][i]["review"] = {"ok": True, "reason": "", "tries": 0}
+        _log(f"页 {i + 1}：命中配图缓存，直接复用")
+        return
+    review = {"ok": True, "reason": "", "tries": 0}
+    for attempt in range(3):
+        try:
+            image_gen.generate_image(prompt, path)
+            with lock:
+                state["slides"][i]["image"] = f"/images/slide_{i}.png"
+                state["slides"][i]["imageStatus"] = "done"
+            rv = critic.review_image(s.get("title", ""), s.get("points", []), path)
+            review = {"ok": rv["ok"], "reason": rv["reason"], "tries": attempt}
+            with lock:
+                state["slides"][i]["review"] = review
+            if rv["ok"]:
+                if attempt == 0:
+                    # 只缓存首轮过审的图：带 advice 改词重生的图与缓存 key 的原 prompt 不再对应
+                    os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
+                    shutil.copyfile(path, cache_path)
+                _log(f"页 {i + 1} 图片完成（校验契合）")
+                break
+            if attempt < 2:
+                if rv["advice"]:
+                    prompt = f"{s.get('image_prompt', prompt)}。注意：{rv['advice']}"
+                _log(f"页 {i + 1} 校验不契合，重生（第 {attempt + 1} 次）：{rv['reason'][:40]}")
+            else:
+                _log(f"页 {i + 1} 已重生 2 次仍未契合，保留当前图")
+        except Exception as e:
+            with lock:
+                state["slides"][i]["imageStatus"] = "failed"
+                state["slides"][i]["review"] = review
+            _log(f"页 {i + 1} 图片生成失败：{e}")
+            break
+
+
 def _gen_images(indices=None):
-    """逐页生图 + 视觉校验闭环（提议者-审核者，不契合改词重生封顶 2 次）。
+    """页级并发生图（线程池最多 3 页同时，生图是最慢环节）。
 
     indices 为 None 时处理全部页；定点修改时只传被改动的页，避免整篇重生图。
     """
     with lock:
         n = len(state["slides"])
         todo = list(range(n)) if indices is None else [i for i in indices if 0 <= i < n]
-    for i in todo:
-        with lock:
-            s = dict(state["slides"][i])
-        prompt = s.get("image_prompt", "")
-        if not prompt:
-            with lock:
-                state["slides"][i]["imageStatus"] = "skipped"
-            _log(f"页 {i + 1}：无配图提示词，跳过")
-            continue
-        path = os.path.join(IMAGES_DIR, f"slide_{i}.png")
-        review = {"ok": True, "reason": "", "tries": 0}
-        for attempt in range(3):
-            try:
-                image_gen.generate_image(prompt, path)
-                with lock:
-                    state["slides"][i]["image"] = f"/images/slide_{i}.png"
-                    state["slides"][i]["imageStatus"] = "done"
-                rv = critic.review_image(s.get("title", ""), s.get("points", []), path)
-                review = {"ok": rv["ok"], "reason": rv["reason"], "tries": attempt}
-                with lock:
-                    state["slides"][i]["review"] = review
-                if rv["ok"]:
-                    _log(f"页 {i + 1} 图片完成（校验契合）")
-                    break
-                if attempt < 2:
-                    if rv["advice"]:
-                        prompt = f"{s.get('image_prompt', prompt)}。注意：{rv['advice']}"
-                    _log(f"页 {i + 1} 校验不契合，重生（第 {attempt + 1} 次）：{rv['reason'][:40]}")
-                else:
-                    _log(f"页 {i + 1} 已重生 2 次仍未契合，保留当前图")
-            except Exception as e:
-                with lock:
-                    state["slides"][i]["imageStatus"] = "failed"
-                    state["slides"][i]["review"] = review
-                _log(f"页 {i + 1} 图片生成失败：{e}")
-                break
+    if not todo:
+        return
+    workers = min(3, len(todo))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            list(ex.map(_gen_image_page, todo))
+    else:
+        for i in todo:
+            _gen_image_page(i)
 
 
 def _generation_worker(content: str, from_text: bool = False):
+    t0 = time.time()
     try:
         if from_text:
             _log("从文档提炼大纲…")
@@ -256,12 +306,25 @@ def _generation_worker(content: str, from_text: bool = False):
             reason = f"（{chosen['reason']}）" if chosen.get("reason") else ""
             _log(f"AI 选定风格：{chosen.get('name')} {reason}")
         _pause_gate("outline", "大纲与风格")
+        t_style_done = time.time()
         _log("开始逐页生图")
         _phase("images")
 
         _gen_images()
+        t_images_done = time.time()
         _pause_gate("design", "配图")
         _design_and_save()
+        t_done = time.time()
+        # 耗时打点：先看清慢在哪一环，再谈优化
+        _log(f"耗时统计：大纲+风格 {t_style_done - t0:.0f}s / 配图 {t_images_done - t_style_done:.0f}s"
+             f" / 设计 {t_done - t_images_done:.0f}s / 总计 {t_done - t0:.0f}s")
+        with lock:
+            cur_slides = [dict(s) for s in state["slides"]]
+        rep = quality_mod.check_deck(cur_slides)
+        if rep["duplicates"]:
+            _log(f"质量提示：疑似重复页 {len(rep['duplicates'])} 组（详情见 /api/quality）")
+        if rep["thin"]:
+            _log(f"质量提示：第 {'、'.join(str(i + 1) for i in rep['thin'][:5])} 页内容偏薄")
         _log("全部页面就绪，可编辑后导出")
         _phase("ready")
     except Exception as e:
@@ -501,8 +564,16 @@ def api_export():
         theme=theme,
         subtitle=topic,
     )
+    # 导出质量门禁：error（越界/页数不符）拒绝交付，warning（文字可能溢出）放行但提示
+    report = qa_mod.check_pptx(out_path, expected_pages=len(slides))
+    if report["errors"]:
+        os.remove(out_path)
+        _log(f"导出被门禁拦截：{report['errors'][0]}")
+        return jsonify({"ok": False, "error": "导出未通过质量门禁", "report": report}), 422
+    if report["warnings"]:
+        _log(f"导出完成（{len(report['warnings'])} 条布局警告，详见响应 report 字段）")
     _log(f"已导出：{os.path.basename(out_path)}")
-    return jsonify({"ok": True, "path": out_path})
+    return jsonify({"ok": True, "path": out_path, "report": report})
 
 
 @app.route("/api/export_txt", methods=["POST"])
@@ -566,6 +637,10 @@ def api_export_pdf():
         [os.path.join(IMAGES_DIR, os.path.basename(s["image"])) if s["image"] else None for s in slides],
         pptx_path, theme=theme, subtitle=topic,
     )
+    report = qa_mod.check_pptx(pptx_path, expected_pages=len(slides))
+    if report["errors"]:
+        os.remove(pptx_path)
+        return jsonify({"ok": False, "error": "导出未通过质量门禁", "report": report}), 422
     if _export_pdf_via_com(pptx_path, pdf_path):
         _log(f"已导出 PDF：{os.path.basename(pdf_path)}")
         return jsonify({"ok": True, "path": pdf_path})
@@ -669,6 +744,13 @@ def api_export_html():
         return jsonify({"error": "生成尚未完成，无法导出"}), 409
     if not slides:
         return jsonify({"error": "没有可导出的页面"}), 400
+
+    with lock:
+        html_path = state.get("html_path")
+    if html_path and os.path.isfile(os.path.join(DECKS_DIR, os.path.basename(html_path))):
+        # 同源导出：LLM 设计稿本身就是 HTML 演示版，不再走第二套简版模板两副面孔
+        _log("已导出 HTML（与设计稿同源）")
+        return jsonify({"ok": True, "same_source": True, "path": html_path})
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     safe_topic = re.sub(r'[\\/:*?"<>| ]', "_", topic or "ppt")[:20]
@@ -875,6 +957,61 @@ def api_template_analyze():
     _log(f"参考稿识别完成：{st['name']}（主色 {st['accent']}）")
     return jsonify({"ok": True, "tpl_style_name": st["name"],
                     "accent": st["accent"], "bg": st["bg"]})
+
+
+@app.route("/api/quality")
+def api_quality():
+    """deck 级质量报告（重复页/内容过瘦），warning 级提示，不阻断任何操作。"""
+    with lock:
+        slides = [dict(s) for s in state["slides"]]
+    return jsonify(quality_mod.check_deck(slides))
+
+
+_HEX6 = re.compile(r"^#[0-9a-fA-F]{6}$")
+_ROOT_BLOCK = re.compile(r":root\s*\{([^}]*)\}", re.IGNORECASE)
+
+
+@app.route("/api/theme", methods=["POST"])
+def api_theme():
+    """直改设计稿 :root 设计令牌，毫秒级换色（不动内容、零 LLM 调用）。
+
+    仅支持带 CSS 变量的新稿（html_gen 硬性要求生成 :root 令牌）；
+    旧稿/变量缺失时明确 409 提示重新生成，而不是静默无效果。
+    """
+    data = request.get_json(force=True) if request.data else {}
+    updates = {}
+    for key in ("bg", "fg", "accent", "muted"):
+        val = str(data.get(key, "") or "").strip()
+        if val and _HEX6.match(val):
+            updates[key] = val
+    if not updates:
+        return jsonify({"error": "请提供至少一个 #RRGGBB 颜色（bg/fg/accent/muted）"}), 400
+    with lock:
+        if state["phase"] not in ("ready", "review"):
+            return jsonify({"error": "请等待生成完成再换色"}), 409
+        html_path = state.get("html_path")
+        if not html_path:
+            return jsonify({"error": "当前没有设计稿"}), 409
+        local = os.path.join(DECKS_DIR, os.path.basename(html_path))
+    if not os.path.isfile(local):
+        return jsonify({"error": "设计稿文件已不存在"}), 404
+    with open(local, encoding="utf-8") as f:
+        doc = f.read()
+    m = _ROOT_BLOCK.search(doc)
+    if not m:
+        return jsonify({"error": "该设计稿不含 CSS 变量（旧版生成），请重新生成后再换色"}), 409
+    block = m.group(1)
+    for key, val in updates.items():
+        block, n = re.subn(rf"(--{key}\s*:\s*)#[0-9a-fA-F]{{3,8}}", rf"\g<1>{val}", block)
+        if n == 0:
+            return jsonify({"error": f"设计稿未定义 --{key} 变量，无法替换"}), 409
+    doc = doc[:m.start(1)] + block + doc[m.end(1):]
+    tmp = local + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(doc)
+    os.replace(tmp, local)
+    _log(f"主题换色完成：{'、'.join(f'{k}→{v}' for k, v in updates.items())}")
+    return jsonify({"ok": True, "applied": updates})
 
 
 @app.route("/images/<path:filename>")

@@ -10,7 +10,7 @@ import os
 
 from dotenv import load_dotenv
 
-import outline
+from llm_util import llm_client
 
 load_dotenv()
 
@@ -21,6 +21,7 @@ PROMPT_TEMPLATE = """你是一位顶级幻灯片视觉设计师。根据下面�
 2. 每页一个 <section class="slide">，占满一屏（100vh），CSS scroll-snap 滚动翻页，并附一小段内联 <script> 支持左右方向键/PageUp/PageDown 翻页
 3. 只用 <style> 内联 CSS 与内联 SVG，禁止引用任何外部资源（无 CDN、无外链字体、无外链图片）
 4. 图片一律使用页面数据中给定的 image 相对路径，不得虚构或改动其他路径；无 image 字段的页面不要放图
+5. 颜色必须收敛到 CSS 设计令牌：在 <style> 开头定义 :root {{ --bg:…; --fg:…; --accent:…; --muted:…; }}，全篇这四种语义色一律引用 var(--bg)/var(--fg)/var(--accent)/var(--muted)，不得在 :root 之外写死这些语义色的十六进制值（同色的深浅变体可用透明度/渐变从令牌派生）
 
 【按内容自主设计（核心）】
 每页布局必须因内容而异，禁止所有页面同构：
@@ -80,15 +81,8 @@ def _ensure_print_css(html: str) -> str:
 
 
 def _call_llm(prompt: str) -> str:
-    # 设计任务输出量大（实测 129~200s），不复用 outline 的 60s 短超时客户端（审计 M1）
-    api_key = os.getenv("ZHIPUAI_API_KEY")
-    if not api_key or api_key == "your-key-here":
-        raise RuntimeError("未配置 ZHIPUAI_API_KEY")
-    client = outline.ZhipuAI(
-        api_key=api_key,
-        base_url=os.getenv("ZHIPUAI_BASE_URL") or None,
-        timeout=300.0,
-    )
+    # 设计任务输出量大（实测 129~200s），复用公共 client 但给 300s 长超时（审计 M1）
+    client = llm_client(300.0)
     model = os.getenv("ZHIPUAI_DESIGN_MODEL") or os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash"
     resp = client.chat.completions.create(
         model=model,
@@ -131,6 +125,15 @@ def _build_prompt(topic: str, slides: list[dict], image_map: dict[int, str], sty
         guidance = style_mod.style_guidance(style)
         if guidance:
             prompt = prompt.replace("【大纲数据】", guidance + "\n\n【大纲数据】", 1)
+        # 显式给出四色令牌值，确保 :root 变量与本稿风格（或用户模板/品牌色）一致
+        palette = {k: style[k] for k in ("bg", "fg", "accent", "muted") if style.get(k)}
+        if len(palette) >= 2:
+            pairs = "；".join(f"--{k}：{v}" for k, v in palette.items())
+            prompt = prompt.replace(
+                "【大纲数据】",
+                f"【视觉基调（写入 :root 设计令牌）】{pairs}\n\n【大纲数据】",
+                1,
+            )
     return prompt
 
 
