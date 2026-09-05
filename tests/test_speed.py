@@ -91,7 +91,9 @@ def test_design_runs_parallel_with_images(client, monkeypatch):
     s = _wait_for(client, lambda x: x["phase"] == "ready")
     assert s["html_path"]
     assert marks["design_start"] is not None and marks["img_done"]
-    assert marks["design_start"] < max(marks["img_done"])  # 设计开始早于图片完成 → 真并行
+    # 设计开始必须不晚于图片完成（图片在等设计放行的事件）；Windows 时钟粒度 ~15ms，
+    # 相等也算并行。串行实现下图片要等 8s 超时才完成，必然严格大于，此断言仍会失败
+    assert marks["design_start"] <= max(marks["img_done"])
     assert os.path.isfile(os.path.join(app_mod.IMAGES_DIR, "slide_0.png"))
 
 
@@ -124,6 +126,44 @@ def test_cache_key_differs_by_mode_and_content():
     p2 = app_mod._outline_cache_path("主题B", False)
     p3 = app_mod._outline_cache_path("主题A", True)
     assert p1 != p2 and p1 != p3
+
+
+def test_design_failure_auto_retry(client, monkeypatch):
+    """设计首次失败（供应商偶发残缺响应）→ 自动补试一轮 → 有稿。"""
+    calls = {"n": 0}
+
+    def flaky_design(topic, slides, image_map, style=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("回复中未找到 HTML 文档（缺 DOCTYPE）")
+        return "<!DOCTYPE html><html><body>ok</body></html>"
+
+    monkeypatch.setattr(html_gen, "generate_html_deck", flaky_design)
+    monkeypatch.setattr(outline, "generate_outline",
+                        lambda topic: [{"type": "cover", "title": "封面", "points": [],
+                                        "image_prompt": "", "chart": None, "layout": None}])
+    client.post("/api/stepwise", json={"enabled": False})
+    client.post("/api/generate", json={"topic": "设计重试测试"})
+    s = _wait_for(client, lambda x: x["phase"] == "ready")
+    assert calls["n"] == 2
+    assert s["html_path"]
+    assert any("自动重试" in line["msg"] for line in s["log"])
+
+
+def test_design_persistent_failure_honest_state(client, monkeypatch):
+    """设计两轮都失败 → 仍 ready 但明确提示缺稿，不假装就绪。"""
+    def bad_design(topic, slides, image_map, style=None):
+        raise RuntimeError("缺 DOCTYPE")
+
+    monkeypatch.setattr(html_gen, "generate_html_deck", bad_design)
+    monkeypatch.setattr(outline, "generate_outline",
+                        lambda topic: [{"type": "cover", "title": "封面", "points": [],
+                                        "image_prompt": "", "chart": None, "layout": None}])
+    client.post("/api/stepwise", json={"enabled": False})
+    client.post("/api/generate", json={"topic": "设计持续失败"})
+    s = _wait_for(client, lambda x: x["phase"] == "ready")
+    assert s["html_path"] is None
+    assert any("设计稿缺失" in line["msg"] for line in s["log"])
 
 
 def test_cache_roundtrip(tmp_path, monkeypatch):

@@ -122,6 +122,17 @@ def _save_project_snapshot():
         _log(f"项目快照保存失败：{e}")
 
 
+def _design_with_retry(image_map=None):
+    """设计失败（如供应商偶发返回残缺响应）自动补试一轮；仍失败则保持无稿状态。"""
+    if _design_and_save(image_map):
+        return
+    with lock:
+        failed_once = not state.get("html_path")
+    if failed_once:
+        _log("设计失败，自动重试一次…")
+        _design_and_save(image_map)
+
+
 def _design_and_save(image_map=None):
     """designing 阶段：调 LLM 自主设计 HTML 并保存，失败仅记日志不阻断。
 
@@ -373,7 +384,7 @@ def _generation_worker(content: str, from_text: bool = False):
             _gen_images()
             t_images_done = time.time()
             _pause_gate("design", "配图")
-            _design_and_save()
+            _design_with_retry()
             t_done = time.time()
             # 耗时打点：先看清慢在哪一环，再谈优化
             _log(f"耗时统计：大纲+风格 {t_style_done - t0:.0f}s / 配图 {t_images_done - t_style_done:.0f}s"
@@ -387,7 +398,7 @@ def _generation_worker(content: str, from_text: bool = False):
                 par_slides = [dict(s) for s in state["slides"]]
             par_map = {i: f"../images/slide_{i}.png" for i, s in enumerate(par_slides)
                        if s.get("image_prompt")}
-            design_thread = threading.Thread(target=_design_and_save, args=(par_map,), daemon=True)
+            design_thread = threading.Thread(target=_design_with_retry, args=(par_map,), daemon=True)
             design_thread.start()
             _gen_images()
             design_thread.join()
@@ -406,6 +417,10 @@ def _generation_worker(content: str, from_text: bool = False):
             _log(f"质量提示：疑似重复页 {len(rep['duplicates'])} 组（详情见 /api/quality）")
         if rep["thin"]:
             _log(f"质量提示：第 {'、'.join(str(i + 1) for i in rep['thin'][:5])} 页内容偏薄")
+        with lock:
+            has_deck = bool(state.get("html_path"))
+        if not has_deck:
+            _log("⚠ 设计稿缺失（设计阶段失败）。大纲与配图已缓存，点「重新设计」只需一次设计调用")
         _log("全部页面就绪，可编辑后导出")
         _phase("ready")
     except Exception as e:
