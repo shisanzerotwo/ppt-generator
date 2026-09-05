@@ -232,6 +232,27 @@ svg { flex-shrink:0; }
   .sidebar { display:none; }
   .main { padding:18px; }
 }
+/* ===== 弹层查看器（原生 dialog：ESC / 焦点管理 / 无障碍语义自带） ===== */
+.modal { border:none; background:transparent; padding:0; margin:auto;
+         width:min(1180px, 92vw); max-height:92vh; overflow:visible; color:var(--fg); }
+.modal::backdrop { background:rgba(9,9,11,.55); }
+.modal-frame { display:flex; flex-direction:column; background:var(--surface);
+               border:1px solid var(--border); border-radius:var(--r-lg);
+               box-shadow:0 24px 70px rgba(0,0,0,.38); max-height:92vh; overflow:hidden; }
+.modal-head { display:flex; align-items:center; gap:10px; padding:11px 14px;
+              border-bottom:1px solid var(--border); flex-shrink:0; }
+.modal-title { font-size:14px; font-weight:600; overflow:hidden;
+               text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.modal-meta { font-size:12px; color:var(--muted); font-family:var(--mono); flex-shrink:0; }
+.modal .sp { flex:1; }
+.modal-body { flex:1; min-height:0; display:flex; background:var(--bg); }
+.modal-body iframe { flex:1; width:100%; height:min(72vh, 700px); border:none; background:#0f172a; }
+.modal-body img { margin:auto; max-width:100%; max-height:82vh; object-fit:contain; padding:16px; }
+/* 放映：dialog 全屏时铺满，复用设计稿自带方向键翻页 */
+.modal:fullscreen { width:100vw; max-width:100vw; height:100vh; max-height:100vh; margin:0; }
+.modal:fullscreen .modal-frame { height:100vh; border-radius:0; border:none; }
+.modal:fullscreen .modal-body iframe { height:100%; }
+.img-area img { cursor:zoom-in; }
 </style>
 </head>
 <body>
@@ -337,6 +358,25 @@ svg { flex-shrink:0; }
   </main>
 </div>
 </div>
+<dialog class="modal" id="viewer" aria-labelledby="viewer-title">
+  <div class="modal-frame">
+    <div class="modal-head">
+      <span class="modal-title" id="viewer-title"></span>
+      <span class="modal-meta" id="viewer-meta"></span>
+      <span class="sp"></span>
+      <button class="btn btn-ghost btn-sm" id="viewer-present" onclick="presentDeck()" title="全屏放映（方向键翻页）">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>放映
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick="openViewerInTab()" title="在新标签打开">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>新标签
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick="closeViewer()" aria-label="关闭预览">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="viewer-body"></div>
+  </div>
+</dialog>
 <div id="toast"></div>
 <script>
 let polling = null;
@@ -546,13 +586,88 @@ async function loadDecks() {
   try {
     const r = await fetch('/api/decks');
     const {decks} = await r.json();
+    // 数据经 data-* 传递并由事件委托消费，避免把字符串拼进内联 onclick（撇号会截断 JS）
     $('deck-list').innerHTML = decks.map(d =>
-      `<button class="side-item" onclick="window.open('${escUrl(d.url)}','_blank')" title="${esc(d.title)}">
+      `<button class="side-item" data-deck="${escUrl(d.url)}" data-title="${esc(d.title)}" data-when="${esc(d.when)}"
+         title="${esc(d.title)} · ${esc(d.when)}">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg>
          <span class="txt">${esc(d.title)}</span><span class="meta">${esc(d.when)}</span>
        </button>`).join('');
   } catch (e) { /* 历史列表失败不影响主流程 */ }
 }
+
+// ===== 内嵌查看器（替代新标签跳转）：放映 / 灯箱共用一个 dialog =====
+let viewerUrl = '';
+let currentDeckUrl = '';   // 当前 AI 设计稿地址，供「查看 / 放映」按钮使用
+
+function openCurrentDeck() {
+  if (!currentDeckUrl) { toast('暂无可预览的设计稿'); return; }
+  openDeckViewer(currentDeckUrl, 'AI 设计稿', '');
+}
+
+function openDeckViewer(url, title, meta) {
+  const safe = escUrl(url);
+  if (!safe) { toast('地址不合法，无法预览'); return; }
+  viewerUrl = safe;
+  const dlg = $('viewer');
+  $('viewer-title').textContent = title || '设计稿';
+  $('viewer-meta').textContent = meta || '';
+  // sandbox=allow-scripts：LLM 产物的翻页脚本可运行，但同源 API 调用被禁止（审计 M2）
+  $('viewer-body').innerHTML =
+    `<iframe src="${safe}?t=${Date.now()}" sandbox="allow-scripts" title="${esc(title || '设计稿预览')}"></iframe>`;
+  $('viewer-present').hidden = false;
+  dlg.showModal();
+}
+
+function openLightbox(url, alt) {
+  const safe = escUrl(url);
+  if (!safe) { toast('图片地址不合法'); return; }
+  viewerUrl = safe;
+  const dlg = $('viewer');
+  $('viewer-title').textContent = alt || '配图';
+  $('viewer-meta').textContent = '';
+  $('viewer-body').innerHTML = `<img src="${safe}" alt="${esc(alt || '配图放大预览')}">`;
+  $('viewer-present').hidden = true;   // 灯箱不放映（无翻页脚本）
+  dlg.showModal();
+}
+
+function presentDeck() {
+  const dlg = $('viewer');
+  if (dlg.requestFullscreen) {
+    dlg.requestFullscreen().catch(() => toast('浏览器拒绝全屏，请用「新标签」打开后按 F11'));
+  }
+}
+
+function openViewerInTab() {
+  if (viewerUrl) window.open(viewerUrl, '_blank');
+}
+
+function closeViewer() { $('viewer').close(); }
+
+// 点击遮罩关闭（dialog 自身收到 click 说明点在内容区外）
+$('viewer').addEventListener('click', e => { if (e.target === $('viewer')) closeViewer(); });
+
+// 事件委托：历史稿列表打开查看器、卡片配图开灯箱
+$('deck-list').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-deck]');
+  if (btn) openDeckViewer(btn.dataset.deck, btn.dataset.title, btn.dataset.when);
+});
+$('cards').addEventListener('click', e => {
+  const img = e.target.closest('.img-area img[data-full]');
+  if (img) openLightbox(img.dataset.full, img.alt);
+});
+$('project-list').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-project]');
+  if (btn) loadProject(btn.dataset.project);
+});
+// 退出全屏后收回面板高度，避免 iframe 残留 100vh
+$('viewer').addEventListener('close', () => {
+  // 关闭时清空 body 以停止 iframe 内脚本；全屏由浏览器随 dialog 关闭自动退出，此处仅兜底
+  $('viewer-body').innerHTML = '';
+  if (document.fullscreenElement) {
+    try { document.exitFullscreen().catch(() => {}); } catch (e) { /* 忽略 */ }
+  }
+});
 
 // ===== 阶段三：页面排序 / 增删（路线图 #7） =====
 let deckCount = 0;   // 由 refresh() 维护，供排序构造全排列
@@ -611,7 +726,7 @@ async function loadProjects() {
     const r = await fetch('/api/projects');
     const {projects} = await r.json();
     $('project-list').innerHTML = projects.map(p =>
-      `<button class="side-item" onclick="loadProject('${escUrl(p.name)}')" title="${esc(p.title)}">
+      `<button class="side-item" data-project="${esc(p.name)}" title="${esc(p.title)}">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
          <span class="txt">${esc(p.title)}</span><span class="meta">${esc(p.when)}</span>
        </button>`).join('');
@@ -633,16 +748,17 @@ function renderPreview(s) {
   const sig = (s.phase === 'ready' && s.html_path) ? s.html_path : '';
   if (el.dataset.sig === sig) return;
   el.dataset.sig = sig;
-  if (!sig) { el.innerHTML = ''; return; }
+  if (!sig) { el.innerHTML = ''; currentDeckUrl = ''; return; }
+  currentDeckUrl = escUrl(s.html_path);
   // sandbox=allow-scripts：LLM 产物的翻页脚本可运行，但同源 API 调用被禁止（审计 M2）
   el.innerHTML = `
     <div class="sec-head">
       <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3l1.9 5.8L20 10l-5.2 3 1.3 6-4.1-3.3L7.9 19l1.3-6L4 10l6.1-1.2z"/></svg>AI 设计稿</h3>
       <span class="sp"></span>
-      <button class="btn btn-ghost btn-sm" onclick="window.open('${escUrl(s.html_path)}','_blank')">全屏演示</button>
+      <button class="btn btn-ghost btn-sm" onclick="openCurrentDeck()">查看 / 放映</button>
       <button class="btn btn-ghost btn-sm" onclick="doRedesign()">重新设计</button>
     </div>
-    <iframe class="deck-frame" src="${escUrl(s.html_path)}?t=${Date.now()}" sandbox="allow-scripts"></iframe>`;
+    <iframe class="deck-frame" src="${currentDeckUrl}?t=${Date.now()}" sandbox="allow-scripts"></iframe>`;
 }
 function vizChart(chart) {
   const labels = chart?.labels || [];
@@ -693,7 +809,8 @@ function renderCards(s) {
 
     let img;
     if (sl.imageStatus === 'generating') img = '<div class="loader"></div>';
-    else if (sl.image) img = `<img src="${escUrl(sl.image)}" alt="第 ${i + 1} 页配图">`;
+    else if (sl.image) img = `<img src="${escUrl(sl.image)}" data-full="${escUrl(sl.image)}"
+                            alt="第 ${i + 1} 页配图" title="点击放大查看">`;
     else img = `<div class="ph">${sl.imageStatus === 'failed' ? '配图生成失败' : '此页无配图'}</div>`;
 
     const imgTools = stype === 'content' ? `
