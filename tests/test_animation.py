@@ -41,6 +41,18 @@ def test_build_player_element_engine(tmp_path):
     assert doc.startswith("<!DOCTYPE html>")
 
 
+def test_build_player_escapes_malicious_title(tmp_path):
+    """审计修复回归：主题含 </title><script> 不得在可执行上下文注入。"""
+    player = anim.build_player(str(tmp_path), "/decks/t.html",
+                               title='x</title><script>alert(1)</script>')
+    doc = open(player, encoding="utf-8").read()
+    # title/h1 上下文：整体转义
+    assert "&lt;/title&gt;&lt;script&gt;" in doc
+    # script 字符串上下文：危险的是闭合序列 </script>，开标签惰性无害
+    assert "</script>alert" not in doc
+    assert "<\\/script>" in doc
+
+
 def test_export_animation_route(client, tmp_path, monkeypatch):
     decks = tmp_path / "decks"
     decks.mkdir()

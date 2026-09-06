@@ -9,6 +9,7 @@
 - 设计稿文本保持可选中/可缩放，16:9 舞台等比缩放
 """
 
+import html
 import json
 import os
 
@@ -154,12 +155,19 @@ def build_player(out_dir: str, deck_web_path: str, title: str = "",
     """在 out_dir 写 index.html 教学动画播放器，返回其路径。
 
     deck_web_path 为设计稿的站内 URL（如 /decks/xxx.html，同源 iframe 直载）。
+    title/deck 来自用户主题与路径，必须按上下文转义后再进模板（审计：主题
+    含 </title><script> 可注入播放器——title 进 HTML 文本与 <title> 两个上下文，
+    deck 进 src 属性上下文，CONFIG 进 <script> 字符串上下文，三处分别处理）。
     """
-    cfg = json.dumps({"deck": deck_web_path, "title": title or "PPT 教学动画",
+    safe_title = html.escape(title or "PPT 教学动画")
+    safe_deck = html.escape(deck_web_path or "", quote=True)
+    cfg = json.dumps({"deck": deck_web_path or "", "title": title or "PPT 教学动画",
                       "autoStepMs": auto_step_ms}, ensure_ascii=False)
+    # <script> 字符串上下文：JSON 里的 </ 可能闭合 script 标签，统一转义
+    cfg = cfg.replace("</", "<\\/")
     doc = (TEMPLATE
-           .replace("__TITLE__", title or "PPT 教学动画")
-           .replace("__DECK__", deck_web_path)
+           .replace("__TITLE__", safe_title)
+           .replace("__DECK__", safe_deck)
            .replace("__CONFIG__", cfg))
     path = os.path.join(out_dir, "index.html")
     os.makedirs(out_dir, exist_ok=True)
