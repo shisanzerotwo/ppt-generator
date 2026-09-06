@@ -34,6 +34,7 @@ DECKS_DIR = os.path.join(OUTPUT_DIR, "decks")
 PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
 ANIMATION_DIR = os.path.join(OUTPUT_DIR, "animation")
 VIDEOS_DIR = os.path.join(OUTPUT_DIR, "videos")
+_video_jobs = set()  # 正在合成视频的稿名（防同稿并发叠加 worker，功能测试缺陷-2）
 
 state = {
     "topic": "",
@@ -1227,7 +1228,8 @@ def api_export_animation():
     out_dir = os.path.join(ANIMATION_DIR, name)
     player = anim_mod.build_player(out_dir, html_path, title=topic)
     _log(f"已导出教学动画（元素级动效）：/animation/{name}/index.html")
-    return jsonify({"ok": True, "path": f"/animation/{name}/index.html",
+    # quote：主题含 #/% 时未编码路径会被浏览器截断成 fragment，前端打不开（功能测试缺陷-1）
+    return jsonify({"ok": True, "path": f"/animation/{quote(name)}/index.html",
                     "deck": html_path})
 
 
@@ -1250,7 +1252,13 @@ def api_export_video():
         return jsonify({"error": "未找到 ffmpeg，请先安装：winget install ffmpeg"}), 503
     name = os.path.splitext(os.path.basename(local))[0]
     shots_dir = os.path.join(ANIMATION_DIR, name)
-    out_path = os.path.join(VIDEOS_DIR, f"{name}_{time.strftime('%Y%m%d_%H%M%S')}.mp4")
+    with lock:
+        if name in _video_jobs:
+            return jsonify({"error": "该稿的视频正在合成中，请看日志进度"}), 409
+        _video_jobs.add(name)
+    # 毫秒后缀：防同稿同秒两次请求互相覆盖产物（功能测试缺陷-2）
+    out_path = os.path.join(
+        VIDEOS_DIR, f"{name}_{time.strftime('%Y%m%d_%H%M%S')}_{time.time_ns() % 1000:03d}.mp4")
 
     def worker():
         try:
@@ -1261,6 +1269,9 @@ def api_export_video():
             _log(f"已导出视频：{os.path.basename(out_path)}，见侧栏「导出产物」")
         except Exception as e:
             _log(f"视频导出失败：{e}")
+        finally:
+            with lock:
+                _video_jobs.discard(name)
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"ok": True, "queued": True})

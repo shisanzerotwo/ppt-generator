@@ -134,3 +134,74 @@ def test_artifacts_includes_video(ready_deck, client):
     open(os.path.join(vids, "x_20260906.mp4"), "wb").write(b"\x00")
     body = client.get("/api/artifacts").get_json()
     assert any(a["kind"] == "mp4" for a in body["artifacts"])
+
+
+# ---------------- 路由接线回归（功能测试缺陷-1/-2 修复） ----------------
+
+@pytest.fixture
+def client():
+    import app as app_mod
+    app_mod.app.config["TESTING"] = True
+    return app_mod.app.test_client()
+
+
+@pytest.fixture
+def anim_state(tmp_path, monkeypatch):
+    import app as app_mod
+    decks = tmp_path / "decks"
+    decks.mkdir()
+    (decks / "t.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(app_mod, "DECKS_DIR", str(decks))
+    monkeypatch.setattr(app_mod, "ANIMATION_DIR", str(tmp_path / "animation"))
+    monkeypatch.setattr(app_mod, "VIDEOS_DIR", str(tmp_path / "videos"))
+    with app_mod.lock:
+        app_mod.state.update({"phase": "ready", "topic": "t", "html_path": "/decks/t.html"})
+    yield
+    with app_mod.lock:
+        app_mod.state.update({"phase": "idle", "html_path": None})
+
+
+def test_export_video_concurrent_guard(anim_state, client, monkeypatch):
+    import threading
+    import app as app_mod
+    release = threading.Event()
+
+    def blocking_shot(html, out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+        release.wait(timeout=10)  # 拖住第一个 worker，制造并发窗口
+        return [str(tmp_path for _ in [0])] if False else []
+
+    monkeypatch.setattr(app_mod.shot_mod, "shot_deck", blocking_shot)
+    r1 = client.post("/api/export_video")
+    assert r1.status_code == 200
+    r2 = client.post("/api/export_video")
+    assert r2.status_code == 409  # 同稿第二发被守卫拦截
+    release.set()
+
+
+def test_export_animation_quotes_special_topic(tmp_path, monkeypatch, client):
+    import app as app_mod
+    decks = tmp_path / "decks"
+    decks.mkdir()
+    # 稿名本身含 #/%（safe_topic 不清洗这两个字符，缺陷-1 的真实触发场景）
+    name = "主题#号%测试_20260906_000000"
+    (decks / f"{name}.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(app_mod, "DECKS_DIR", str(decks))
+
+    def fake_shot(html, out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+        return [str(tmp_path / "slide_1.png")]
+
+    monkeypatch.setattr(app_mod.shot_mod, "shot_deck", fake_shot)
+    with app_mod.lock:
+        app_mod.state.update({"phase": "ready", "topic": name,
+                              "html_path": f"/decks/{name}.html"})
+    try:
+        resp = client.post("/api/export_animation")
+        assert resp.status_code == 200
+        path = resp.get_json()["path"]
+        assert "#" not in path and "%" in path  # # 已编码，不再截断 URL
+        assert client.get(path).status_code == 200
+    finally:
+        with app_mod.lock:
+            app_mod.state.update({"phase": "idle", "html_path": None})
