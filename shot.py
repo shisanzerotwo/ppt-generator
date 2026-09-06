@@ -7,6 +7,7 @@ Playwright 复用本机 Chrome/Edge（channel 启动），免下载浏览器内�
 """
 
 import os
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -31,7 +32,8 @@ def _launch_browser(p):
 def shot_deck(html_path: str, out_dir: str) -> list[str]:
     """截取设计稿每一页，返回图片路径列表（slide_1.png 起，与页序一致）。"""
     os.makedirs(out_dir, exist_ok=True)
-    url = "file:///" + os.path.abspath(html_path).replace("\\", "/")
+    # as_uri() 自动百分号编码：稿名含 #/% 时裸拼 file:/// 会被截断（审计 M1）
+    url = Path(os.path.abspath(html_path)).as_uri()
     shots: list[str] = []
     with sync_playwright() as p:
         browser = _launch_browser(p)

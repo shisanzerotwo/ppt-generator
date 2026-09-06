@@ -169,7 +169,7 @@ def test_export_video_concurrent_guard(anim_state, client, monkeypatch):
     def blocking_shot(html, out_dir):
         os.makedirs(out_dir, exist_ok=True)
         release.wait(timeout=10)  # 拖住第一个 worker，制造并发窗口
-        return [str(tmp_path for _ in [0])] if False else []
+        return []
 
     monkeypatch.setattr(app_mod.shot_mod, "shot_deck", blocking_shot)
     r1 = client.post("/api/export_video")
@@ -205,3 +205,14 @@ def test_export_animation_quotes_special_topic(tmp_path, monkeypatch, client):
     finally:
         with app_mod.lock:
             app_mod.state.update({"phase": "idle", "html_path": None})
+
+
+def test_synthesize_rejects_fade_ge_seconds(tmp_path):
+    """审计 L1：fade≥seconds 会让 ffmpeg 静默产出丢页坏视频，必须在入口拒绝。"""
+    imgs = []
+    for i in (1, 2):
+        p = tmp_path / f"s{i}.png"
+        _make_png(p)
+        imgs.append(str(p))
+    with pytest.raises(ValueError, match="转场时长"):
+        video.synthesize(imgs, str(tmp_path / "o.mp4"), seconds=1.0, fade=2.0)

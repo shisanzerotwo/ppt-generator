@@ -1265,7 +1265,7 @@ def api_export_video():
             shots = shot_mod.shot_deck(local, shots_dir)  # 同稿重导时浏览器缓存内秒级
             _log(f"视频合成开始：{len(shots)} 页（16:9）")
             video_mod.synthesize(shots, out_path, seconds=4.0, fade=0.8,
-                                 progress_cb=lambda d, t: None)
+                                 progress_cb=lambda d, t: _log(f"视频合成 {d}/{t} 页…"))
             _log(f"已导出视频：{os.path.basename(out_path)}，见侧栏「导出产物」")
         except Exception as e:
             _log(f"视频导出失败：{e}")

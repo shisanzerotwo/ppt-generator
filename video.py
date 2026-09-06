@@ -76,8 +76,12 @@ def build_final_args(page_clips: list[str], out: str, seconds: float = 4.0,
              "-pix_fmt", "yuv420p", out])
 
 
-def _run(args: list[str], err: str):
-    p = subprocess.run(args, capture_output=True, text=True)
+def _run(args: list[str], err: str, timeout: float = 300):
+    """带超时执行：ffmpeg 挂死（磁盘满/杀毒拦截）时不至于永久占用 _video_jobs。"""
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"{err}：执行超时（>{timeout:.0f}s），已终止") from e
     if p.returncode != 0:
         raise RuntimeError(f"{err}：{p.stderr[-400:]}")
 
@@ -88,6 +92,9 @@ def synthesize(shots: list[str], out_path: str, seconds: float = 4.0,
 
     progress_cb(done, total) 用于日志进度。
     """
+    if not 0 < fade < seconds:
+        raise ValueError(f"转场时长需在 (0, 每页时长) 之间，当前 fade={fade}, seconds={seconds}"
+                         "（fade≥seconds 会让 ffmpeg 静默产出丢页的坏视频，审计 L1）")
     ff = ffmpeg_path()
     if not ff:
         raise RuntimeError("未找到 ffmpeg，请先安装：winget install ffmpeg")
@@ -98,14 +105,16 @@ def synthesize(shots: list[str], out_path: str, seconds: float = 4.0,
         clips = []
         for i, img in enumerate(shots, 1):
             clip = os.path.join(tmp_dir, f"page_{i:03d}.mp4")
-            _run(build_page_args(img, clip, seconds), f"第 {i} 页片段合成失败")
+            _run(build_page_args(img, clip, seconds), f"第 {i} 页片段合成失败",
+                 timeout=max(180, seconds * 60))
             clips.append(clip)
             if progress_cb:
                 progress_cb(i, len(shots))
         if len(clips) == 1:
             shutil.copyfile(clips[0], out_path)
         else:
-            _run(build_final_args(clips, out_path, seconds, fade), "视频拼合失败")
+            _run(build_final_args(clips, out_path, seconds, fade), "视频拼合失败",
+                 timeout=max(300, seconds * len(clips) * 30))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
     return out_path

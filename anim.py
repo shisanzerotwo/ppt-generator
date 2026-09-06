@@ -12,6 +12,7 @@
 import html
 import json
 import os
+import re
 
 TEMPLATE = """<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8">
@@ -163,12 +164,13 @@ def build_player(out_dir: str, deck_web_path: str, title: str = "",
     safe_deck = html.escape(deck_web_path or "", quote=True)
     cfg = json.dumps({"deck": deck_web_path or "", "title": title or "PPT 教学动画",
                       "autoStepMs": auto_step_ms}, ensure_ascii=False)
-    # <script> 字符串上下文：JSON 里的 </ 可能闭合 script 标签，统一转义
-    cfg = cfg.replace("</", "<\\/")
-    doc = (TEMPLATE
-           .replace("__TITLE__", safe_title)
-           .replace("__DECK__", safe_deck)
-           .replace("__CONFIG__", cfg))
+    # <script> 字符串上下文：JSON 里的 </ 可能闭合 script 标签，统一转义；
+    # <!-- 会让解析器进入注释态使末尾 </script> 失效（审计 L4），一并处理
+    cfg = cfg.replace("</", "<\\/").replace("<!--", "<\\!--")
+    # 单遍替换：链式 str.replace 会让后续 replace 扫到先前替换插入的文本，
+    # title 含 __CONFIG__ 字样时可绕过转义注入活标签（审计 M2）
+    mapping = {"__TITLE__": safe_title, "__DECK__": safe_deck, "__CONFIG__": cfg}
+    doc = re.sub(r"__TITLE__|__DECK__|__CONFIG__", lambda m: mapping[m.group(0)], TEMPLATE)
     path = os.path.join(out_dir, "index.html")
     os.makedirs(out_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

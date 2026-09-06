@@ -588,7 +588,7 @@ function esc(s) {
 // URL 白名单：只放行后端产出的静态路径，杜绝内联事件/属性里的注入
 function escUrl(u) {
   const s = String(u ?? '');
-  return /^\/(decks|images|files)\/[^"'<>\s]*$/.test(s) ? s : '';
+  return /^\/(decks|images|files|animation|videos)\/[^"'<>\s]*$/.test(s) ? s : '';
 }
 
 let toastTimer = null;

@@ -87,3 +87,17 @@ def test_artifacts_includes_animation(client, tmp_path, monkeypatch):
     body = client.get("/api/artifacts").get_json()
     match = [a for a in body["artifacts"] if a["kind"] == "anim"]
     assert match and match[0]["url"].endswith("/index.html")
+
+
+def test_player_placeholder_collision_escaped(tmp_path):
+    """审计 M2：title 含 __CONFIG__ 时不得经二次替换绕过转义。"""
+    title = '<img src=x onerror=alert(1)>__CONFIG__'
+    player = anim.build_player(str(tmp_path), "/decks/t.html", title=title)
+    doc = open(player, encoding="utf-8").read()
+    # HTML 上下文必须转义（活标签不可出现）
+    assert "<title>&lt;img" in doc and "<h1>&lt;img" in doc
+    h1 = doc.split("<h1>")[1].split("</h1>")[0]
+    assert '"deck"' not in h1  # 单遍替换生效：title 里的 __CONFIG__ 不得被展开成 CFG JSON
+    # 原始标签文本只允许存在于 CFG 的 JS 数据行（textContent 消费，不进 innerHTML）
+    raw = [l for l in doc.splitlines() if "<img src=x" in l]
+    assert len(raw) == 1 and "const CFG" in raw[0]
