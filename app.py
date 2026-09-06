@@ -22,6 +22,7 @@ import qa as qa_mod
 import quality as quality_mod
 import shot as shot_mod
 import anim as anim_mod
+import video as video_mod
 import style as style_mod
 import template as template_mod
 import uploads as uploads_mod
@@ -32,6 +33,7 @@ IMAGES_DIR = os.path.join(OUTPUT_DIR, "images")
 DECKS_DIR = os.path.join(OUTPUT_DIR, "decks")
 PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
 ANIMATION_DIR = os.path.join(OUTPUT_DIR, "animation")
+VIDEOS_DIR = os.path.join(OUTPUT_DIR, "videos")
 
 state = {
     "topic": "",
@@ -1207,9 +1209,9 @@ def api_theme():
 
 @app.route("/api/export_animation", methods=["POST"])
 def api_export_animation():
-    """阶段一：设计稿逐页截图（16:9 1280×720）→ 零依赖 Ken Burns 动画播放器。
+    """阶段一 v2：教学讲解动画——iframe 同源加载设计稿 + 注入元素级入场动效。
 
-    纯本地渲染，零 LLM 调用。
+    标题/要点/配图逐个出现（手动步进为主，自动讲解可选）。零 LLM、零截图。
     """
     with lock:
         if state["phase"] not in ("ready", "review"):
@@ -1223,20 +1225,59 @@ def api_export_animation():
         return jsonify({"error": "设计稿文件已不存在"}), 404
     name = os.path.splitext(os.path.basename(local))[0]
     out_dir = os.path.join(ANIMATION_DIR, name)
-    try:
-        shots = shot_mod.shot_deck(local, out_dir)
-    except Exception as e:
-        return jsonify({"error": f"截图失败：{e}"}), 500
-    player = anim_mod.build_player(out_dir, shots, title=topic)
-    _log(f"已导出动画：{len(shots)} 页（16:9），见 /animation/{name}/index.html")
+    player = anim_mod.build_player(out_dir, html_path, title=topic)
+    _log(f"已导出教学动画（元素级动效）：/animation/{name}/index.html")
     return jsonify({"ok": True, "path": f"/animation/{name}/index.html",
-                    "pages": len(shots)})
+                    "deck": html_path})
+
+
+@app.route("/api/export_video", methods=["POST"])
+def api_export_video():
+    """阶段二：设计稿逐页截图 → ffmpeg 合成 MP4（Ken Burns+交叉淡入，16:9）。
+
+    合成走后台线程（10 页约 1~2 分钟），进度与完成写日志，产物进侧栏列表。
+    """
+    with lock:
+        if state["phase"] not in ("ready", "review"):
+            return jsonify({"error": "请先生成 PPT，再导出视频"}), 409
+        html_path = state.get("html_path")
+        if not html_path:
+            return jsonify({"error": "当前没有设计稿"}), 409
+        local = os.path.join(DECKS_DIR, os.path.basename(unquote(html_path)))
+    if not os.path.isfile(local):
+        return jsonify({"error": "设计稿文件已不存在"}), 404
+    if not video_mod.ffmpeg_path():
+        return jsonify({"error": "未找到 ffmpeg，请先安装：winget install ffmpeg"}), 503
+    name = os.path.splitext(os.path.basename(local))[0]
+    shots_dir = os.path.join(ANIMATION_DIR, name)
+    out_path = os.path.join(VIDEOS_DIR, f"{name}_{time.strftime('%Y%m%d_%H%M%S')}.mp4")
+
+    def worker():
+        try:
+            shots = shot_mod.shot_deck(local, shots_dir)  # 同稿重导时浏览器缓存内秒级
+            _log(f"视频合成开始：{len(shots)} 页（16:9）")
+            video_mod.synthesize(shots, out_path, seconds=4.0, fade=0.8,
+                                 progress_cb=lambda d, t: None)
+            _log(f"已导出视频：{os.path.basename(out_path)}，见侧栏「导出产物」")
+        except Exception as e:
+            _log(f"视频导出失败：{e}")
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({"ok": True, "queued": True})
 
 
 @app.route("/animation/<path:filename>")
 def animation_files(filename):
     """动画播放器与其图片目录（output/animation/<稿名>/index.html + slide_N.png）。"""
     return send_from_directory(ANIMATION_DIR, filename)
+
+
+@app.route("/videos/<path:filename>")
+def video_files(filename):
+    """视频下载（仅 .mp4 白名单）。"""
+    if not filename.lower().endswith(".mp4"):
+        return jsonify({"error": "该类型不支持访问"}), 403
+    return send_from_directory(VIDEOS_DIR, filename)
 
 
 @app.route("/images/<path:filename>")
@@ -1284,13 +1325,25 @@ def api_artifacts():
     if os.path.isdir(ANIMATION_DIR):
         for name in os.listdir(ANIMATION_DIR):
             player = os.path.join(ANIMATION_DIR, name, "index.html")
-            if os.path.isfile(player):
-                try:
-                    mtime = os.path.getmtime(player)
-                except OSError:
-                    continue
-                items.append({"name": f"{name}（动画）", "kind": "anim",
-                              "url": f"/animation/{quote(name)}/index.html", "mtime": mtime})
+            if not os.path.isfile(player):
+                continue
+            try:
+                mtime = os.path.getmtime(player)
+            except OSError:
+                continue
+            items.append({"name": f"{name}（教学动画）", "kind": "anim",
+                          "url": f"/animation/{quote(name)}/index.html", "mtime": mtime})
+    if os.path.isdir(VIDEOS_DIR):
+        for name in os.listdir(VIDEOS_DIR):
+            if not name.lower().endswith(".mp4"):
+                continue
+            full = os.path.join(VIDEOS_DIR, name)
+            try:
+                mtime = os.path.getmtime(full)
+            except OSError:
+                continue
+            items.append({"name": name, "kind": "mp4", "url": f"/videos/{quote(name)}",
+                          "mtime": mtime})
     items.sort(key=lambda x: x["mtime"], reverse=True)
     for it in items:
         stem = it["name"].rsplit(".", 1)[0]

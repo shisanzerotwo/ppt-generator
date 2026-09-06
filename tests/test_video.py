@@ -66,3 +66,71 @@ def test_synthesize_real_ffmpeg(tmp_path):
         assert stream["codec_name"] == "h264"
         # 2 页 × 1s − 1 个 0.4s 转场 = 1.6s
         assert abs(float(info["format"]["duration"]) - 1.6) < 0.5
+
+
+# ---------------- 路由接线（app.py ↔ video.py） ----------------
+
+@pytest.fixture
+def client():
+    import app as app_mod
+    app_mod.app.config["TESTING"] = True
+    return app_mod.app.test_client()
+
+
+@pytest.fixture
+def ready_deck(tmp_path, monkeypatch):
+    import app as app_mod
+    decks = tmp_path / "decks"
+    decks.mkdir()
+    (decks / "t.html").write_text("<div class='slide'>p</div>", encoding="utf-8")
+    monkeypatch.setattr(app_mod, "DECKS_DIR", str(decks))
+    monkeypatch.setattr(app_mod, "ANIMATION_DIR", str(tmp_path / "animation"))
+    monkeypatch.setattr(app_mod, "VIDEOS_DIR", str(tmp_path / "videos"))
+    with app_mod.lock:
+        app_mod.state.update({"phase": "ready", "html_path": "/decks/t.html"})
+    yield
+    with app_mod.lock:
+        app_mod.state.update({"phase": "idle", "html_path": None})
+
+
+def test_export_video_queued(ready_deck, client):
+    resp = client.post("/api/export_video")
+    assert resp.status_code == 200 and resp.get_json()["queued"] is True
+    if video.ffmpeg_path():  # 真 ffmpeg：等后台 worker 写完成日志
+        import time
+        import app as app_mod
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            with app_mod.lock:
+                msgs = [l["msg"] for l in app_mod.state["log"]]
+            if any("已导出视频" in m or "视频导出失败" in m for m in msgs):
+                break
+            time.sleep(0.3)
+        assert any("已导出视频" in m for m in msgs)
+
+
+def test_export_video_requires_ffmpeg(ready_deck, client, monkeypatch):
+    import video as v
+    monkeypatch.setattr(v, "ffmpeg_path", lambda: None)
+    resp = client.post("/api/export_video")
+    assert resp.status_code == 503
+    assert "winget install ffmpeg" in resp.get_json()["error"]
+
+
+def test_video_download_whitelist(ready_deck, client):
+    import app as app_mod
+    vids = os.path.join(app_mod.VIDEOS_DIR)
+    os.makedirs(vids, exist_ok=True)
+    open(os.path.join(vids, "a.mp4"), "wb").write(b"\x00\x00")
+    open(os.path.join(vids, "evil.html"), "w").write("<script>")
+    assert client.get("/videos/a.mp4").status_code == 200
+    assert client.get("/videos/evil.html").status_code == 403
+
+
+def test_artifacts_includes_video(ready_deck, client):
+    import app as app_mod
+    vids = app_mod.VIDEOS_DIR
+    os.makedirs(vids, exist_ok=True)
+    open(os.path.join(vids, "x_20260906.mp4"), "wb").write(b"\x00")
+    body = client.get("/api/artifacts").get_json()
+    assert any(a["kind"] == "mp4" for a in body["artifacts"])

@@ -430,7 +430,8 @@ a.side-item:hover { color:var(--fg); }
       </summary>
       <div class="menu-body">
         <button id="ex-html" onclick="doExportHtml()" disabled>HTML 演示版</button>
-        <button id="ex-anim" onclick="doExportAnim()" disabled>🎞 动画版（16:9）</button>
+        <button id="ex-anim" onclick="doExportAnim()" disabled>🎞 教学动画</button>
+        <button id="ex-vid" onclick="doExportVideo()" disabled>🎬 视频 MP4</button>
         <button id="ex-pptx" onclick="doExport()" disabled>pptx 可编辑版</button>
         <button id="ex-pdf" onclick="doExportPdf()" disabled>PDF 文档</button>
         <button id="ex-txt" onclick="doExportTxt()" disabled>大纲 txt</button>
@@ -575,7 +576,7 @@ const LAYOUT_LABEL = {'image-right':'左文右图', 'image-left':'左图右文',
 const PHASE_PCT = {idle:0, outline:22, images:52, review:52, designing:80, refining:80, ready:100};
 const STEP_LABEL = {outline: '大纲与风格已就绪，确认后开始逐页生图',
                     design: '配图已完成，确认后 AI 开始设计 HTML'};
-const EXPORT_IDS = ['ex-html', 'ex-pptx', 'ex-pdf', 'ex-txt', 'ex-anim'];
+const EXPORT_IDS = ['ex-html', 'ex-anim', 'ex-vid', 'ex-pptx', 'ex-pdf', 'ex-txt'];
 
 const $ = id => document.getElementById(id);
 
@@ -704,12 +705,18 @@ async function exportAs(url, label) {
 }
 async function doExport()     { exportAs('/api/export', ' pptx'); }
 async function doExportAnim() {
-  toast('正在逐页截图并生成动画（纯本地渲染）…');
+  toast('正在生成教学动画（元素级动效）…');
   const {ok, data} = await post('/api/export_animation', {});
   if (!ok) { toast(data.error || '动画导出失败'); return; }
-  toast(`已导出动画（${data.pages} 页），新标签打开放映`, 5000);
+  toast('教学动画已生成：空格/→ 逐步讲解，点击画面亦可步进', 6000);
   window.open(data.path, '_blank');
   refresh();
+}
+async function doExportVideo() {
+  toast('视频合成已排队（后台进行，进度见日志）…');
+  const {ok, data} = await post('/api/export_video', {});
+  if (!ok) { toast(data.error || '视频导出失败'); return; }
+  startPolling();
 }
 async function doExportTxt()  { exportAs('/api/export_txt', '大纲'); }
 async function doExportPdf()  { exportAs('/api/export_pdf', ' PDF'); }
