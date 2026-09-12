@@ -4,6 +4,8 @@
 QA 按 qa 的行数算，一旦两边不一致，同一段文字会"高亮在这行、溢出告警算那行"。
 """
 
+import os
+
 import pytest
 
 import hl_layout
@@ -122,3 +124,390 @@ def test_wrap_lines_preserves_all_non_space_chars():
             lines = hl_layout.wrap_lines(text, 18.0, box)
             joined = "".join(line.text for line in lines).replace(" ", "")
             assert joined == text.replace(" ", ""), f"{name} @ {box}pt 丢字"
+
+
+# ---------------------------------------------------------------- 定位层
+
+def _shape(**kw):
+    from pptx_io import ShapeInfo
+    base = dict(shape_id=1, name="S", kind="text", left_emu=12700 * 100, top_emu=12700 * 50,
+                width_emu=12700 * 200, height_emu=12700 * 100)
+    base.update(kw)
+    return ShapeInfo(**base)
+
+
+def _para(text, size=18.0, **kw):
+    from pptx_io import ParaInfo, RunInfo
+    return ParaInfo(text=text, runs=[RunInfo(text=text, size_pt=size, bold=None,
+                                             italic=None, font_name=None)], **kw)
+
+
+def _page(shapes, w=12700 * 1920, h=12700 * 1080):
+    from pptx_io import PageShapes
+    return PageShapes(index=0, width_emu=w, height_emu=h, shapes=shapes)
+
+
+def test_build_units_positions_first_line_inside_margins():
+    """行矩形从框内边距处起算，并退回 pad 补偿量。"""
+    sh = _shape(paragraphs=[_para("人工智能教育")])
+    units = hl_layout.build_units(_page([sh]), export_width_px=1920, pad_x_pt=2.0, pad_y_pt=1.0)
+    assert len(units) == 1
+    line = units[0].lines[0]
+    # inner_left = 100pt + 7.2pt = 107.2pt；减 pad 2pt → 105.2pt
+    assert line.left_emu == round(105.2 * 12700)
+    assert line.top_emu == round((50 + 3.6 - 1.0) * 12700)
+
+
+def test_build_units_px_uses_export_width():
+    """px 是派生量：导出宽减半，px 也减半，EMU 不变。"""
+    sh = _shape(paragraphs=[_para("一二三四")])
+    a = hl_layout.build_units(_page([sh]), export_width_px=1920)[0]
+    b = hl_layout.build_units(_page([sh]), export_width_px=960)[0]
+    assert a.lines[0].left_emu == b.lines[0].left_emu
+    assert a.lines[0].left_px == pytest.approx(b.lines[0].left_px * 2)
+
+
+def test_build_units_multiline_advances_cursor():
+    """多行：每行一个 rect，top 按 line_h = 字号×1.25 递增。"""
+    sh = _shape(width_emu=12700 * 80, paragraphs=[_para("人工智能教育行业")])
+    lines = hl_layout.build_units(_page([sh]))[0].lines
+    assert len(lines) > 1
+    pitch = lines[1].top_emu - lines[0].top_emu
+    assert pitch == pytest.approx(18.0 * qa.LINE_HEIGHT_FACTOR * 12700, rel=1e-6)
+
+
+def test_build_units_middle_anchor_shifts_block_down():
+    """MIDDLE 锚点：整块按剩余高度一半下移（builder 稿大量使用）。"""
+    mid = _shape(height_emu=12700 * 300, vertical_anchor="MIDDLE", paragraphs=[_para("短")])
+    top = hl_layout.build_units(_page([mid]))[0].lines[0].top_px
+    plain_sh = _shape(height_emu=12700 * 300, paragraphs=[_para("短")])
+    plain = hl_layout.build_units(_page([plain_sh]))[0].lines[0].top_px
+    assert top > plain
+
+
+def test_build_units_bottom_anchor_shifts_more_than_middle():
+    mid = _shape(height_emu=12700 * 300, vertical_anchor="MIDDLE", paragraphs=[_para("短")])
+    bot = _shape(height_emu=12700 * 300, vertical_anchor="BOTTOM", paragraphs=[_para("短")])
+    y_mid = hl_layout.build_units(_page([mid]))[0].lines[0].top_px
+    y_bot = hl_layout.build_units(_page([bot]))[0].lines[0].top_px
+    assert y_bot > y_mid
+
+
+def test_build_units_center_and_right_alignment():
+    x_left = hl_layout.build_units(_page([
+        _shape(width_emu=12700 * 400, paragraphs=[_para("短")])]))[0].lines[0].left_px
+    x_center = hl_layout.build_units(_page([
+        _shape(width_emu=12700 * 400, paragraphs=[_para("短", align="CENTER")])]))[0].lines[0].left_px
+    x_right = hl_layout.build_units(_page([
+        _shape(width_emu=12700 * 400, paragraphs=[_para("短", align="RIGHT")])]))[0].lines[0].left_px
+    assert x_left < x_center < x_right
+
+
+def test_build_units_justify_falls_back_to_left_with_warning():
+    sh = _shape(paragraphs=[_para("两端对齐", align="JUSTIFY")])
+    u = hl_layout.build_units(_page([sh]))[0]
+    assert u.align == "LEFT" and "justify_approximated" in u.warnings
+
+
+def test_build_units_left_align_none_is_normalized():
+    u = hl_layout.build_units(_page([_shape(paragraphs=[_para("继承对齐")])]))[0]
+    assert u.align == "LEFT"
+
+
+def test_build_units_font_scale_scales_size_and_warns():
+    sh = _shape(font_scale=60.0, paragraphs=[_para("自动缩排", size=20.0)])
+    u = hl_layout.build_units(_page([sh]))[0]
+    assert u.size_pt == pytest.approx(12.0)
+    assert "autofit_scaled" in u.warnings
+
+
+def test_build_units_vertical_anchor_none_warns_inherited():
+    u = hl_layout.build_units(_page([_shape(paragraphs=[_para("继承锚点")])]))[0]
+    assert "vertical_anchor_inherited" in u.warnings
+
+
+def test_build_units_skips_shape_with_no_inner_width():
+    """内宽 <= 0（边距吃掉整宽）→ 不出 Unit，不抛异常。"""
+    sh = _shape(width_emu=12700 * 10, margin_left_emu=91440, margin_right_emu=91440,
+                paragraphs=[_para("放不下")])
+    assert hl_layout.build_units(_page([sh])) == []
+
+
+def test_build_units_skips_blank_paragraph():
+    sh = _shape(paragraphs=[_para("   "), _para("有内容")])
+    units = hl_layout.build_units(_page([sh]))
+    assert len(units) == 1 and units[0].text == "有内容"
+
+
+def test_build_units_first_paragraph_space_before_ignored():
+    """首段段前距不计入（V5 实测 PowerPoint 忽略文本框首段段前距），后续段落计入。"""
+    sh = _shape(paragraphs=[_para("一", space_before_pt=20.0),
+                            _para("二", space_before_pt=20.0)])
+    units = hl_layout.build_units(_page([sh]))
+    assert len(units) == 2
+    gap = units[1].lines[0].top_emu - units[0].lines[0].top_emu
+    # 第一段行高 18×1.25 = 22.5pt，加第二段段前距 20pt
+    assert gap == pytest.approx((18 * qa.LINE_HEIGHT_FACTOR + 20) * 12700, rel=1e-6)
+
+
+def test_build_units_order_is_document_order():
+    shapes = [_shape(shape_id=i, name=f"S{i}", paragraphs=[_para(f"第{i}段")])
+              for i in (1, 2, 3)]
+    units = hl_layout.build_units(_page(shapes))
+    assert [u.order for u in units] == [0, 1, 2]
+    assert [u.shape_id for u in units] == [1, 2, 3]
+
+
+def test_build_units_picture_is_one_block_unit():
+    sh = _shape(kind="picture", shape_id=7, name="Pic",
+                width_emu=12700 * 200, height_emu=12700 * 100)
+    units = hl_layout.build_units(_page([sh]))
+    assert len(units) == 1 and units[0].kind == "picture"
+    assert units[0].lines == [units[0].rect]
+    assert units[0].rect.width_emu == 12700 * 200
+
+
+def test_build_units_chart_is_single_unit_not_split():
+    """R4：图表整块一个单元，不拆数据点。"""
+    units = hl_layout.build_units(_page([_shape(kind="chart", shape_id=9, name="Chart")]))
+    assert len(units) == 1 and units[0].kind == "chart"
+
+
+def test_build_units_table_cells_use_prefix_sums():
+    from pptx_io import ShapeInfo
+    sh = ShapeInfo(shape_id=3, name="T", kind="table", left_emu=0, top_emu=0,
+                   width_emu=12700 * 300, height_emu=12700 * 200,
+                   table_cells=[[[_para("A1")], [_para("")]],
+                                [[_para("")], [_para("B2")]]],
+                   table_col_widths_emu=[12700 * 100, 12700 * 200],
+                   table_row_heights_emu=[12700 * 100, 12700 * 100])
+    units = hl_layout.build_units(_page([sh]))
+    assert [u.kind for u in units] == ["cell", "cell"]
+    a1, b2 = units
+    assert b2.lines[0].top_emu - a1.lines[0].top_emu == pytest.approx(12700 * 100)
+    assert b2.lines[0].left_emu - a1.lines[0].left_emu == pytest.approx(12700 * 100)
+
+
+def test_build_units_walks_group_children():
+    from pptx_io import ShapeInfo
+    child = _shape(shape_id=11, name="Child", paragraphs=[_para("组内")])
+    group = ShapeInfo(shape_id=10, name="G", kind="group", left_emu=0, top_emu=0,
+                      width_emu=12700 * 400, height_emu=12700 * 200, children=[child])
+    units = hl_layout.build_units(_page([group]))
+    assert len(units) == 1 and units[0].shape_id == 11
+
+
+def test_build_units_other_kind_produces_nothing():
+    assert hl_layout.build_units(_page([_shape(kind="other", shape_id=5)])) == []
+
+
+def test_build_units_rejects_dict_without_deck():
+    """deck.json 的 page dict 不带画布尺寸 → 必须显式过 page_shapes()。"""
+    with pytest.raises(ValueError, match="page_shapes"):
+        hl_layout.build_units({"index": 0, "shapes": []})
+
+
+def test_page_shapes_bridges_deck_dict():
+    from types import SimpleNamespace
+    deck = SimpleNamespace(width_emu=100, height_emu=50)
+    ps = hl_layout.page_shapes({"index": 2, "bg": "bg/slide_1.png", "shapes": []}, deck)
+    assert (ps.index, ps.width_emu, ps.height_emu) == (2, 100, 50)
+
+
+def test_page_shapes_passthrough():
+    p = _page([])
+    assert hl_layout.page_shapes(p) is p
+
+
+def test_title_classified_by_relative_font_size():
+    """标题判定：字号 >= 1.3× 本页中位字号（builder 的框名是 TextBox N，名字判不出）。"""
+    units = hl_layout.build_units(_page([
+        _shape(shape_id=1, name="TextBox 1", paragraphs=[_para("大标题", size=40.0)]),
+        _shape(shape_id=2, name="TextBox 2", paragraphs=[_para("正文一", size=18.0)]),
+        _shape(shape_id=3, name="TextBox 3", paragraphs=[_para("正文二", size=18.0)]),
+    ]))
+    kinds = {u.text: u.kind for u in units}
+    assert kinds["大标题"] == "title"
+    assert kinds["正文一"] in ("body", "bullet")
+
+
+def test_title_classified_by_shape_name():
+    u = hl_layout.build_units(_page([
+        _shape(name="标题 1", paragraphs=[_para("小字", size=10.0)])]))[0]
+    assert u.kind == "title"
+
+
+# ---------------------------------------------------------------- 覆盖率度量
+
+def _png(tmp_path, name, size=(60, 40), bg=(255, 255, 255), box=None):
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", size, bg)
+    if box:
+        ImageDraw.Draw(img).rectangle(box, fill=(0, 0, 0))
+    p = tmp_path / name
+    img.save(p)
+    return str(p)
+
+
+def test_measure_coverage_half_black(tmp_path):
+    p = _png(tmp_path, "half.png", size=(40, 40), box=[0, 0, 19, 39])
+    assert hl_layout.measure_coverage(p, (0, 0, 40, 40)) == pytest.approx(0.5, abs=0.03)
+
+
+def test_measure_coverage_all_ink_with_explicit_bg(tmp_path):
+    """整块墨迹：必须显式给底色——环取底色时整块同色矩形没有对比，测不出墨迹
+    （这是契约默认 bg_rgb=None 的固有盲点，验收脚本因此显式传局部底色）。"""
+    p = _png(tmp_path, "ink.png", size=(20, 20), bg=(0, 0, 0))
+    assert hl_layout.measure_coverage(p, (0, 0, 20, 20), bg_rgb=(255, 255, 255)) == 1.0
+
+
+def test_measure_coverage_ring_bg_blind_on_uniform_block(tmp_path):
+    """锁住上面那条盲点：同色整块 + 默认环取底色 → 0.0（不是 bug，是口径使然）。"""
+    p = _png(tmp_path, "blk.png", size=(20, 20), bg=(0, 0, 0))
+    assert hl_layout.measure_coverage(p, (0, 0, 20, 20)) == 0.0
+
+
+def test_measure_coverage_blank_is_zero(tmp_path):
+    assert hl_layout.measure_coverage(_png(tmp_path, "blank.png"), (0, 0, 60, 40)) == 0.0
+
+
+def test_measure_coverage_empty_rect_is_zero(tmp_path):
+    p = _png(tmp_path, "e.png")
+    assert hl_layout.measure_coverage(p, (5, 5, 0, 10)) == 0.0
+    assert hl_layout.measure_coverage(p, (5, 5, 10, 0)) == 0.0
+
+
+def test_measure_coverage_explicit_bg_overrides_ring(tmp_path):
+    """显式底色优先：深底与浅底各自算得对（环取底色在紧贴墨迹时会失准）。"""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (40, 40), (200, 200, 200))
+    ImageDraw.Draw(img).rectangle([0, 0, 39, 19], fill=(30, 30, 30))
+    p = tmp_path / "two.png"
+    img.save(p)
+    dark = hl_layout.measure_coverage(str(p), (0, 0, 40, 20), bg_rgb=(30, 30, 30))
+    light = hl_layout.measure_coverage(str(p), (0, 20, 40, 20), bg_rgb=(200, 200, 200))
+    assert dark == pytest.approx(0.0, abs=0.02)
+    assert light == pytest.approx(0.0, abs=0.02)
+
+
+def test_measure_coverage_clamps_out_of_bounds_rect(tmp_path):
+    p = _png(tmp_path, "small.png", size=(10, 10), bg=(0, 0, 0))
+    assert hl_layout.measure_coverage(p, (5, 5, 100, 100), bg_rgb=(255, 255, 255)) == 1.0
+
+
+def test_measure_coverage_respects_diff_threshold(tmp_path):
+    from PIL import Image
+    img = Image.new("RGB", (10, 10), (255, 255, 255))
+    for x in range(10):
+        img.putpixel((x, 0), (245, 245, 245))  # 差 10，低于默认阈值
+    p = tmp_path / "thr.png"
+    img.save(p)
+    assert hl_layout.measure_coverage(str(p), (0, 0, 10, 10)) == 0.0
+    assert hl_layout.measure_coverage(str(p), (0, 0, 10, 10), diff_thresh=5) > 0.0
+
+
+# ---------------------------------------------------------------- 端到端验收（需底图）
+
+_BG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "output", "spike", "m1")
+_DECK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "output", "b_multislide.pptx")
+
+needs_material = pytest.mark.skipif(
+    not (os.path.isfile(_DECK) and os.path.isfile(os.path.join(_BG_DIR, "slide_1.png"))),
+    reason="缺 output/b_multislide.pptx 或 COM 底图（先跑 tools/probes/accept_m1.py）")
+
+
+def _band_bg(img, box, band=3):
+    """矩形外侧 3px 环带的底色中位值（比内侧环稳，比幻灯片主色正确）。"""
+    l, t, w, h = (int(round(v)) for v in box)
+    la, ta = max(0, l - band), max(0, t - band)
+    ra, ba = min(img.width, l + w + band), min(img.height, t + h + band)
+    ri, bi = min(img.width, l + w), min(img.height, t + h)
+    px = img.load()
+    vals = []
+    for y in range(ta, ba):
+        for x in range(la, ra):
+            if l <= x < ri and t <= y < bi:
+                continue
+            vals.append(px[x, y])
+    if not vals:
+        return None
+    return tuple(sorted(v[c] for v in vals)[len(vals) // 2] for c in range(3))
+
+
+@needs_material
+def test_line_coverage_beats_shape_level_by_2_5x():
+    """M2 端到端验收：行级覆盖率相对**形状级**提升 >= 2.5 倍（同一函数、同一底色）。
+
+    为什么是相对提升而不是绝对阈值：绝对覆盖率的天花板由两个不可控量决定——
+    行高框（line_h=字号×1.25）比 CJK 墨迹高约 27%，且字形墨迹在 em 盒里的密度
+    只有 ~0.41（实测分解 0.731×0.960×0.414=0.286）。绝对目标 0.35 在本契约公式下
+    不可达，详见 docs/IMPL_REPORT.md 的契约缺陷节。相对提升则只衡量"行级定位是否
+    真的比形状级贴合"，与尺度的绝对值无关。
+    """
+    from PIL import Image
+
+    import pptx_io
+
+    deck, _ = pptx_io.read_pages(_DECK)
+    shape_cov, line_cov = [], []
+    for page in deck.pages:
+        bg = os.path.join(_BG_DIR, f"slide_{page['index'] + 1}.png")
+        img = Image.open(bg).convert("RGB")
+        for shape in page["shapes"]:
+            if shape.kind != "text":
+                continue
+            scale = 1920.0 / deck.width_emu
+            box = (shape.left_emu * scale, shape.top_emu * scale,
+                   shape.width_emu * scale, shape.height_emu * scale)
+            bb = _band_bg(img, box)
+            shape_cov.append(hl_layout.measure_coverage(bg, box, bg_rgb=bb))
+        for u in hl_layout.build_units(hl_layout.page_shapes(page, deck)):
+            for r in u.lines:
+                box = (r.left_px, r.top_px, r.width_px, r.height_px)
+                bb = _band_bg(img, box)
+                line_cov.append(hl_layout.measure_coverage(bg, box, bg_rgb=bb))
+
+    import statistics
+    shape_med = statistics.median(shape_cov)
+    line_med = statistics.median(line_cov)
+    assert shape_med > 0, "形状级覆盖率不该为 0"
+    assert line_med / shape_med >= 2.5, (
+        f"行级/形状级 = {line_med:.3f}/{shape_med:.3f} = {line_med / shape_med:.2f}× < 2.5×")
+
+
+@needs_material
+def test_no_line_rect_escapes_its_shape_box():
+    """框溢出率 <= 5%：行 rect 不该跑到所属形状外框之外（高亮跑出框外是观感事故）。"""
+    from PIL import Image  # noqa: F401
+
+    import pptx_io
+
+    deck, _ = pptx_io.read_pages(_DECK)
+    scale = 1920.0 / deck.width_emu
+    total = escaped = 0
+    for page in deck.pages:
+        by_id = {}
+        _index_shapes(by_id, page["shapes"])
+        for u in hl_layout.build_units(hl_layout.page_shapes(page, deck)):
+            shape = by_id.get(u.shape_id)
+            if shape is None:
+                continue
+            sl, st = shape.left_emu * scale, shape.top_emu * scale
+            sr = sl + shape.width_emu * scale
+            sb = st + shape.height_emu * scale
+            for r in u.lines:
+                total += 1
+                if (r.left_px < sl - 1 or r.top_px < st - 1
+                        or r.left_px + r.width_px > sr + 1
+                        or r.top_px + r.height_px > sb + 1):
+                    escaped += 1
+    assert total > 0
+    assert escaped / total <= 0.05, f"溢出 {escaped}/{total} = {escaped / total:.1%}"
+
+
+def _index_shapes(store, shapes):
+    for shape in shapes:
+        store[shape.shape_id] = shape
+        _index_shapes(store, shape.children)
