@@ -338,3 +338,88 @@ def build_player(out_dir: str, bg_paths: list, pages_units: list,
     with open(path, "w", encoding="utf-8") as f:
         f.write(doc)
     return path
+
+
+# ---------------------------------------------------------------- 步进截图
+
+def shot_player(player_html: str, out_dir: str, steps: list,
+                min_settle_ms: int = 300, max_settle_ms: int = 2000) -> list[str]:
+    """逐 (page, step) 驱动 `window.hl.goto` → 截图 → `step_0001.png…`，返回路径列表。
+
+    沿用 `shot.py` 的三重确定化（KNOWLEDGE.md 红线：**别退回固定 sleep**）：
+    ① `window.hl.ready`；② `screenshot(animations="disabled")`；③ 连续两帧字节一致轮询。
+
+    两处与契约 §6.5 不同的实现选择：
+    - `_launch_browser` / `_screenshot_settled` 是 `shot.py` 的私有名，这里**有意复用**
+      （契约 §6.5 明列的二选一退路）。没有复制第三份确定化实现。
+    - **截图前先校验底图真的加载出来了**（审计 L4）：播放器本身不校验文件存在，
+      缺图时页面全黑而 `hl.ready` 照样 resolve，会把黑帧安静地截进 MP4。这里用
+      `naturalWidth > 0` 兜底，一张缺失即报 IR_MISMATCH。
+
+    截图尺寸恒等于播放器画布（先把 `.frame` 撑到画布尺寸、令缩放比为 1 再截
+    `#frame`），因此不受窗口大小影响。
+    """
+    from pathlib import Path
+
+    from playwright.sync_api import sync_playwright
+
+    import shot  # 有意复用私有符号，见契约 §6.5
+
+    steps = list(steps or [])
+    if not steps:
+        raise PptxError("步进序列为空，没有可截图的步骤", "BAD_ARGS", "至少给一个 (page, step)")
+    if not os.path.isfile(player_html):
+        raise PptxError(f"找不到播放器页面：{player_html}", "IR_MISMATCH",
+                        "先执行 pptgen animate 生成 player/index.html")
+
+    os.makedirs(out_dir, exist_ok=True)
+    url = Path(os.path.abspath(player_html)).as_uri()
+    paths: list[str] = []
+    with sync_playwright() as p:
+        browser = shot._launch_browser(p)
+        try:
+            page = browser.new_page(viewport={"width": 640, "height": 360})
+            page.goto(url, wait_until="load")
+            page.evaluate("window.hl.ready")
+
+            size = page.evaluate(
+                "() => ({w: CFG.canvasWidth, h: CFG.canvasHeight})")
+            w, h = int(size["w"]), int(size["h"])
+            page.set_viewport_size({"width": w, "height": h})
+            # 让舞台独占视口：截图走 shot._screenshot_settled 的 page.screenshot，
+            # 截的是视口而非元素，所以必须把标题/按钮栏藏掉、body 去掉居中，
+            # 否则截出来是"页面"而不是"幻灯片"（画布外露着 body 底色）。
+            page.evaluate(
+                """([w, h]) => {
+                    document.querySelector('h1').style.display = 'none';
+                    document.querySelector('.bar').style.display = 'none';
+                    document.body.style.cssText =
+                        'margin:0;padding:0;display:block;overflow:hidden;background:#000';
+                    const f = document.getElementById('frame');
+                    f.style.width = w + 'px';
+                    f.style.height = h + 'px';
+                    f.style.aspectRatio = 'auto';
+                    f.style.borderRadius = '0';
+                    f.style.boxShadow = 'none';
+                    fit();
+                }""", [w, h])
+
+            check = page.evaluate(
+                "() => ({total: BGS.length,"
+                "        failed: BGS.filter((s, i) => imgs[i].naturalWidth === 0)})")
+            if check["failed"]:
+                raise PptxError(
+                    f"底图加载失败 {len(check['failed'])}/{check['total']}：{check['failed'][0]}",
+                    "IR_MISMATCH", "重新执行 pptgen import 生成底图")
+
+            frame = page.locator("#frame")
+            for k, (pg, st) in enumerate(steps, 1):
+                page.evaluate("([p, s]) => window.hl.goto(p, s)", [int(pg), int(st)])
+                data = shot._screenshot_settled(page, min_settle_ms, max_settle_ms)
+                out = os.path.abspath(os.path.join(out_dir, f"step_{k:04d}.png"))
+                with open(out, "wb") as f:
+                    f.write(data)
+                paths.append(out)
+        finally:
+            browser.close()
+    return paths

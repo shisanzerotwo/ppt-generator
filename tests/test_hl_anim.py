@@ -221,3 +221,89 @@ def test_empty_deck_is_allowed(tmp_path):
     path, doc = _build(tmp_path, bg=[], pages=[])
     assert os.path.isfile(path)
     assert json.loads(re.search(r"const PAGES = (.*?);\n", doc).group(1)) == []
+
+
+# ---------------------------------------------------------------- 步进截图
+
+def _mkbg(path, color):
+    from PIL import Image
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    Image.new("RGB", (64, 36), color).save(path)
+
+
+def _shot(player, out, steps, **kw):
+    import hl_anim as m
+    try:
+        return m.shot_player(player, out, steps, **kw)
+    except RuntimeError as e:  # 本机没有 Chrome/Edge
+        pytest.skip(f"无可用浏览器：{e}")
+
+
+def _canvas_player(tmp_path, colors=((200, 30, 30), (30, 200, 30))):
+    """2 页、每页 1 个单元、底图为纯色的迷你播放器（画布 640×360，截图快）。"""
+    out = tmp_path / "pl"
+    bg = []
+    for i, c in enumerate(colors, 1):
+        rel = f"bg/slide_{i}.png"
+        _mkbg(str(out / rel), c)
+        bg.append(rel)
+    pages = [[_unit(text=f"第{i}页要点")] for i in range(len(colors))]
+    player = hl_anim.build_player(str(out), bg, pages, canvas_width_px=640,
+                                  canvas_height_px=360)
+    return player, out
+
+
+def test_shot_player_rejects_empty_steps(tmp_path):
+    from pptx_io import PptxError
+    with pytest.raises(PptxError) as ei:
+        hl_anim.shot_player(str(tmp_path / "x.html"), str(tmp_path / "o"), [])
+    assert ei.value.code == "BAD_ARGS"
+
+
+def test_shot_player_rejects_missing_player_html(tmp_path):
+    from pptx_io import PptxError
+    with pytest.raises(PptxError) as ei:
+        hl_anim.shot_player(str(tmp_path / "nope.html"), str(tmp_path / "o"), [(0, 1)])
+    assert ei.value.code == "IR_MISMATCH"
+
+
+def test_shot_player_one_png_per_step(tmp_path):
+    """验收：步进序列截图数 == len(steps)，尺寸 == 画布，文件非空白。"""
+    from PIL import Image
+    player, out = _canvas_player(tmp_path)
+    shots = _shot(player, str(tmp_path / "frames"),
+                  [(0, 1), (0, 2), (1, 1), (1, 2), (1, 3)])
+    assert len(shots) == 5
+    assert [os.path.basename(s) for s in shots] == [
+        "step_0001.png", "step_0002.png", "step_0003.png", "step_0004.png", "step_0005.png"]
+    for s in shots:
+        assert os.path.getsize(s) > 0
+        with Image.open(s) as im:
+            assert im.size == (640, 360)
+            # 非空白：画面主色应当是该页底图色（纯色块）
+            assert sum(im.convert("RGB").getpixel((20, 20))) > 60
+
+
+def test_shot_player_frames_match_requested_page(tmp_path):
+    """第 0 页与第 1 页截出来的底色不同 —— 证明 goto(page) 真的切了底图。"""
+    from PIL import Image
+    player, out = _canvas_player(tmp_path)
+    shots = _shot(player, str(tmp_path / "f2"), [(0, 1), (1, 1)])
+    with Image.open(shots[0]) as a, Image.open(shots[1]) as b:
+        pa = a.convert("RGB").getpixel((600, 20))
+        pb = b.convert("RGB").getpixel((600, 20))
+    assert pa[0] > pa[1] and pb[1] > pb[0], f"两页底色没区分开：{pa} vs {pb}"
+
+
+def test_shot_player_missing_bg_raises_not_black_frame(tmp_path):
+    """审计 L4：缺底图时播放器会安静地出黑帧；shot_player 必须先报错。"""
+    from pptx_io import PptxError
+    out = tmp_path / "pl"
+    _mkbg(str(out / "bg" / "slide_1.png"), (10, 10, 200))
+    player = hl_anim.build_player(str(out), ["bg/slide_1.png", "bg/nope.png"],
+                                  [[_unit()], [_unit()]],
+                                  canvas_width_px=320, canvas_height_px=180)
+    with pytest.raises(PptxError) as ei:
+        hl_anim.shot_player(player, str(tmp_path / "f3"), [(0, 1)])
+    assert ei.value.code == "IR_MISMATCH"
+    assert "底图" in ei.value.message
