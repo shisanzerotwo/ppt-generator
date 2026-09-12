@@ -601,6 +601,9 @@ def export_pages(pptx_path: str, out_dir: str, width: int = 1920) -> list[str]:
     pythoncom.CoInitialize()
     app = None
     pres = None
+    # S1 守卫（真机实测修复）：只有**我们自己新增**的那份稿才允许 Close。
+    # 见 tools/probes/s1_probe_v2.py 与 docs/AUDIT_REPORT.md 的 S1 节。
+    we_opened = False
     done: list[str] = []
     try:
         try:
@@ -616,6 +619,12 @@ def export_pages(pptx_path: str, out_dir: str, width: int = 1920) -> list[str]:
             # 拒绝隐形实例，且会连带影响用户正在看/没保存的窗口）
             pres = app.Presentations.Open(abs_pptx, ReadOnly=True, Untitled=False,
                                           WithWindow=False)
+            # **S1 守卫**：PowerPoint 对**已打开的同一路径**返回既有实例、
+            # 不增加 Presentations.Count。所以"打开后计数变多"才证明这份稿是
+            # 我们打开的；否则它属于用户，绝不能在 finally 里 Close 掉。
+            # 真机对照（tools/probes/s1_probe_v2.py，独立进程当"用户"观察）：
+            #   修复前 helper 读到 COUNT=0（用户稿被关）；修复后 COUNT=1（仍在）。
+            we_opened = app.Presentations.Count > pre_count
         except Exception as exc:  # noqa: BLE001
             raise PptxError(
                 f"PowerPoint 打开失败：{os.path.basename(abs_pptx)}"
@@ -644,7 +653,9 @@ def export_pages(pptx_path: str, out_dir: str, width: int = 1920) -> list[str]:
             done.append(png)
     finally:
         try:
-            if pres is not None:
+            # 只关自己新增的那一份（S1）：用户已开着同一份稿时 we_opened=False，
+            # 保持他的稿原样。实测未加此守卫时，用户的稿会被关掉而丢失未保存修改。
+            if pres is not None and we_opened:
                 pres.Close()
         except Exception:  # noqa: BLE001
             pass

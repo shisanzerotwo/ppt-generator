@@ -97,22 +97,34 @@ $ grep -n "\.Quit()\|\.Close()\|pre_count\|had_powerpoint\|Presentations\.Count"
 
 `pre_count` **被赋值后从未被读取**（第 613 行赋值，全文件再无引用）——守卫实际用的是 `had_powerpoint` + 结束时的 `Count == 0`。契约 §3.4-5 的伪码写的是 `pre_count == 0`，实现的第二道守卫换成了"结束时 Count==0"（更严），这是**未申报的偏离（属加固方向，非缺陷）**，但同时说明 `pre_count` 成了死变量（提示级）。
 
-#### S1 · 实测复核（编排者补，2026-09-12）
+#### S1 · 实测复核与修复（编排者补，2026-09-12）
 
-本节原判定为「严重（条件性）· **静态推断（未实测）**」。编排者用独立探针 `tools/probes/s1_close_guard_probe.py` 做了**真机实测**，结论：**S1 成立（已复现）**，严重度维持。
+本节原判定为「严重（条件性）· **静态推断（未实测）**」。编排者写了两版探针做真机对照，结论：**S1 成立（已复现）**，且**已修复并通过阳性/阴性对照**。严重度维持。
 
-```
-[1] 模拟用户已打开：user_deck.pptx   Presentations.Count = 1
-[2] export_pages 成功，导出 10 页底图
-[3] 调用后 Presentations.Count = 0，仍打开的稿：[]
-判定：S1 成立（复现）—— 用户的稿被 export_pages 关掉了
-      PowerPoint 进程仍在（Quit 守卫生效）：True
-```
+**探针 v1（`tools/probes/s1_close_guard_probe.py`）—— 方法有缺陷，仅作过程记录**
 
-- **探针安全设计三重**：① 闸门 —— 启动前若已有 `POWERPNT.EXE` 则整条中止、一次 COM 都不调；② 只用 `tempfile` 副本，绝不触碰真实文件；③ 只 `Quit` 自己启动的实例。运行后 `tasklist` 复核：**无孤儿进程**。
-- **实验恰好隔离出 `Close()` 的单独效果**：探针自己先拉起 PowerPoint 并打开副本，因此 `export_pages` 内部的 `had_powerpoint=True` → `Quit` 被守卫挡住（进程仍在，✔ 守卫有效），但用户的稿已被**无条件 `Close()`** 关掉（✘ 漏洞在此）。
-- **附带独立复现了 F1**：探针第二次 `Dispatch` 抛 `0x800401F0`（尚未调用 CoInitialize）—— 因为 `export_pages` 内部的 `CoUninitialize()` 拆掉了调用方 apartment。这是 F1 的第三方复现，与本报告的静态结论一致。
-- **影响面**：触发条件是"用户恰好打开着同一份稿"；后果是该用户稿件被关闭，**未保存的修改随之丢失**。修复方向（供后续决策）：`Close()` 前比对该 presentation 的路径是否为自己打开的那一份，或改为只对"自己 Open 返回的副本"操作。
+同进程里先用 `Presentations.Open()` 打开「用户稿」，再调 `export_pages()`；观测到 `Count` 1 → 0。
+
+但该结果**不足以证明是 `Close()` 干的**：`export_pages` 内部的 `CoUninitialize()`（即 F1）同样会让 PowerPoint 收回本进程持有的文档引用、使 `Count` 归零。**v1 的复现存在假阳性风险**，故不作为最终证据。
+
+**探针 v2（`tools/probes/s1_probe_v2.py`）—— 把「用户」移到独立进程**
+
+helper 子进程 `Open` 后原地待命、全程不释放 COM；主进程调 `export_pages()`；随后由 helper 读 `Presentations.Count` —— 它的 apartment 全程有效，因此这个数字才真实反映「用户的稿还在不在」。
+
+| 代码版本 | helper 观察 | 判定 |
+|---|---|---|
+| 修复**前**（`git checkout` 回退做阳性对照） | `CHECK COUNT=0 ALIVE=[]` | **S1 成立** —— 用户的稿被关掉 |
+| 修复**后** | `CHECK COUNT=1 ALIVE=['user_deck.pptx']` | S1 消失 |
+
+这三件事同时被证明：v2 探针**有效**（有阳性对照）、S1 是**真问题**（独立客户端观察，排除 CoUninitialize 假阳性）、修复**有效**。
+
+**修复**（`pptx_io.export_pages`）：用「`Open` 前后 `Presentations.Count` 是否增加」判定稿的归属 —— PowerPoint 对**已打开的同一路径**返回既有实例、计数不增，因此只有计数变多才说明这份稿是我们打开的，才允许 `Close`。防回归用例：`tests/test_s1_close_guard.py`（3 条打桩用例，**不启动 PowerPoint**）。
+
+**探针安全设计三重**：① 闸门 —— 启动前若已有 `POWERPNT.EXE` 则整条中止、一次 COM 都不调；② 只用 `tempfile` 副本，绝不触碰真实文件；③ 只 `Quit` 自己启动的实例。运行后 `tasklist` 复核：**无孤儿进程**。
+
+**附带独立复现了 F1**：v1 探针第二次 `Dispatch` 抛 `0x800401F0`（尚未调用 CoInitialize）—— 因为 `export_pages` 内部的 `CoUninitialize()` 拆掉了调用方 apartment。这是 F1 的第三方复现。
+
+**影响面**：触发条件是"用户恰好打开着同一份稿"；后果是该用户稿件被关闭，**未保存的修改随之丢失**。**现已修复。**
 
 ---
 
