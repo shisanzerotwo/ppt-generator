@@ -87,7 +87,7 @@ def _run(args: list[str], err: str, timeout: float = 300):
 
 
 def synthesize(shots: list[str], out_path: str, seconds: float = 4.0,
-               fade: float = 0.8, progress_cb=None) -> str:
+               fade: float = 0.8, progress_cb=None, fps: int = FPS) -> str:
     """执行合成：逐页片段 → xfade 拼合 → 清理临时片段，返回 out_path。
 
     progress_cb(done, total) 用于日志进度。
@@ -105,7 +105,7 @@ def synthesize(shots: list[str], out_path: str, seconds: float = 4.0,
         clips = []
         for i, img in enumerate(shots, 1):
             clip = os.path.join(tmp_dir, f"page_{i:03d}.mp4")
-            _run(build_page_args(img, clip, seconds), f"第 {i} 页片段合成失败",
+            _run(build_page_args(img, clip, seconds, fps), f"第 {i} 页片段合成失败",
                  timeout=max(180, seconds * 60))
             clips.append(clip)
             if progress_cb:
@@ -113,7 +113,7 @@ def synthesize(shots: list[str], out_path: str, seconds: float = 4.0,
         if len(clips) == 1:
             shutil.copyfile(clips[0], out_path)
         else:
-            _run(build_final_args(clips, out_path, seconds, fade), "视频拼合失败",
+            _run(build_final_args(clips, out_path, seconds, fade, fps), "视频拼合失败",
                  timeout=max(300, seconds * len(clips) * 30))
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
