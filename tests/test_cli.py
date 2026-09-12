@@ -248,6 +248,29 @@ def test_export_bad_template(tmp_path, capsys):
     assert code == 3 and payload["error"]["code"] == "TEMPLATE_INVALID"
 
 
+def test_export_end_to_end(tmp_path, capsys):
+    """deck.json → 可编辑 pptx：页数对、qa 自检无 error、JSON 里带回 warnings。"""
+    d = _deck_dir(tmp_path)
+    out = tmp_path / "edit.pptx"
+    code, payload, _ = _run(["export", os.path.join(d, "deck.json"),
+                             "-o", str(out)], capsys)
+    assert code == 0, payload
+    data = payload["data"]
+    assert data["errors"] == [] and data["pages"] == 2
+    assert os.path.isfile(out) and os.path.getsize(out) > 0
+
+    from pptx import Presentation
+    assert len(Presentation(str(out)).slides) == 2
+
+
+def test_export_default_output_path(tmp_path, capsys):
+    """-o 省略时落在 deck.json 同目录、同主名。"""
+    d = _deck_dir(tmp_path)
+    code, payload, _ = _run(["export", os.path.join(d, "deck.json")], capsys)
+    assert code == 0, payload
+    assert payload["data"]["pptx"] == os.path.join(d, "deck.pptx")
+
+
 # ---------------------------------------------------------------- deck
 
 def test_deck_command_runs_pipeline(tmp_path, capsys, monkeypatch):

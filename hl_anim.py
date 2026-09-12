@@ -278,6 +278,22 @@ def _check_bg_path(path: str) -> None:
                         "重新执行 pptgen import 生成 deck.json")
 
 
+def _rebase_bg(path: str, out_dir: str, bg_base_dir: str) -> str:
+    """把「相对 bg_base_dir」的底图路径改写成「相对 out_dir（播放器所在目录）」。
+
+    契约 §5 的目录树是 `<out>/player/index.html` + `<out>/bg/*.png`，而 §6.1 的
+    `bg_paths` 又写成"相对 out_dir"。两者对 out_dir 的所指不一致：播放器实际在
+    `<out>/player/` 下，浏览器按**播放器文件所在目录**解析 src，直接用 `bg/x.png`
+    会请求 `<out>/player/bg/x.png`（不存在）→ 页面全黑。这里显式做一次 rebase。
+    """
+    base = os.path.abspath(bg_base_dir)
+    target = os.path.abspath(os.path.join(base, str(path).replace("\\", "/")))
+    if target != base and not target.startswith(base + os.sep):
+        raise PptxError(f"底图路径逃出输出目录：{path}", "IR_MISMATCH",
+                        "重新执行 pptgen import 生成 deck.json")
+    return os.path.relpath(target, os.path.abspath(out_dir)).replace("\\", "/")
+
+
 def _unit_payload(u: Unit) -> dict:
     return {
         "k": u.kind,
@@ -290,8 +306,13 @@ def _unit_payload(u: Unit) -> dict:
 def build_player(out_dir: str, bg_paths: list, pages_units: list,
                  title: str = "", dim: float = 0.25, auto_step_ms: int = 2000,
                  canvas_width_px: int = DEFAULT_CANVAS_W,
-                 canvas_height_px: int = DEFAULT_CANVAS_H) -> str:
-    """写 <out_dir>/index.html，返回其路径。零截图、零 iframe、零外部依赖。"""
+                 canvas_height_px: int = DEFAULT_CANVAS_H,
+                 bg_base_dir: str | None = None) -> str:
+    """写 <out_dir>/index.html，返回其路径。零截图、零 iframe、零外部依赖。
+
+    bg_paths 默认已相对 out_dir；若它们相对别的目录（CLI 的 `<out>/player/` 布局
+    就是这种情形），传 `bg_base_dir` 让本函数负责改写（见 `_rebase_bg`）。
+    """
     if len(bg_paths) != len(pages_units):
         raise PptxError(
             f"底图数与讲解单元页数不一致：{len(bg_paths)} vs {len(pages_units)}",
@@ -318,7 +339,9 @@ def build_player(out_dir: str, bg_paths: list, pages_units: list,
         _check_bg_path(p)
 
     safe_title = html.escape(str(title or "PPT 高亮讲解"))
-    bg_json = _js_json([_web_path(p) for p in bg_paths])
+    web_paths = [_rebase_bg(p, out_dir, bg_base_dir) if bg_base_dir else _web_path(p)
+                 for p in bg_paths]
+    bg_json = _js_json(web_paths)
     units_json = _js_json([[_unit_payload(u) for u in page] for page in pages_units])
     cfg = _js_json({
         "title": str(title or "PPT 高亮讲解"),
