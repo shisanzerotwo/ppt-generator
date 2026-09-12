@@ -89,14 +89,23 @@ a.side-item:hover { color:var(--fg); }
 .tpl-del { margin-left:auto; color:var(--muted); font-size:13px; line-height:1; padding:2px 4px; border-radius:4px; flex-shrink:0; }
 .tpl-del:hover { color:#e5484d; background:rgba(229,72,77,.12); }
 .model-grid { display:flex; flex-direction:column; gap:6px; padding:6px 2px; }
+.model-grid > * { min-width: 0; }
 .model-grid label { display:flex; flex-direction:column; gap:3px; font-size:11.5px; color:var(--muted); }
-.model-grid input { padding:5px 8px; border:1px solid var(--border,#2a3548); border-radius:6px;
-  background:transparent; color:inherit; font-size:12px; }
-.model-grid input:focus { outline:none; border-color:var(--accent); }
+.model-grid input, .model-grid select { padding:5px 8px; border:1px solid var(--border,#2a3548); border-radius:6px;
+  background:transparent; color:inherit; font-size:12px; width:100%; min-width:0; }
+.model-grid select { text-overflow:ellipsis; }
+.model-grid input:focus, .model-grid select:focus { outline:none; border-color:var(--accent); }
 .model-btns { display:flex; gap:6px; }
 .model-btns .side-item { flex:1; justify-content:center; font-size:12px; }
-#model-panel summary { cursor:pointer; font-size:12.5px; padding:6px 8px; color:var(--muted); }
-#model-panel summary:hover { color:var(--accent); }
+.ch-models { display:flex; flex-wrap:wrap; gap:5px; }
+.ch-models .chip { display:inline-flex; align-items:center; gap:5px; font-size:11.5px;
+  padding:3px 8px; border:1px solid var(--border,#2a3548); border-radius:20px; color:var(--fg); }
+.ch-models .chip button { background:none; border:0; color:var(--muted); cursor:pointer;
+  font-size:12px; line-height:1; padding:0; }
+.ch-models .chip button:hover { color:#e5484d; }
+.side-note { font-size:11px; color:var(--muted); opacity:.75; line-height:1.5; }
+.model-grid .brand-row { min-width:0; }
+.model-grid .brand-row > * { min-width:0; }
 .density-sel { padding:5px 8px; border:1px solid var(--border,#2a3548); border-radius:6px;
   background:transparent; color:inherit; font-size:12.5px; cursor:pointer; }
 .density-sel:focus { outline:none; border-color:var(--accent); }
@@ -104,10 +113,42 @@ a.side-item:hover { color:var(--fg); }
 .tpl-current b { color:var(--accent); }
 .side-foot { border-top:1px solid var(--border); padding:10px 12px; }
 .workspace { flex:1; min-width:0; display:flex; flex-direction:column; }
-/* ===== 顶栏（瘦身：仅输入 + 生成）===== */
-.topbar { display:flex; align-items:center; gap:10px; padding:14px 28px;
+/* ===== 顶栏（瘦身：仅输入 + 生成 + 模型快捷栏）===== */
+.topbar { display:flex; align-items:center; gap:10px; padding:10px 28px;
           background:var(--surface); border-bottom:1px solid var(--border);
-          position:sticky; top:0; z-index:20; }
+          position:sticky; top:0; z-index:20; flex-wrap:wrap; }
+.model-quickbar { flex-basis:100%; display:flex; align-items:center; font-size:12px; color:var(--muted); padding-top:2px; }
+.qb-trigger { display:inline-flex; align-items:center; gap:7px; padding:5px 11px;
+  border:1px solid var(--border,#2a3548); border-radius:var(--r,8px); background:transparent;
+  color:var(--fg); font-size:12.5px; cursor:pointer; transition:border-color var(--t), background var(--t); }
+.qb-trigger:hover { border-color:var(--accent); background:var(--accent-soft); }
+.qb-trigger .chev { color:var(--faint); }
+/* 模型对话框：复用 .modal 骨架，内部竖排三区 */
+.mm-frame { width:min(560px, 92vw); }
+.mm-body { display:flex; flex-direction:column; gap:14px; padding:16px; overflow:auto; max-height:74vh; }
+.mm-sec { display:flex; flex-direction:column; gap:8px; padding-bottom:12px; border-bottom:1px dashed var(--border); }
+.mm-sec:last-child { border-bottom:none; padding-bottom:0; }
+.mm-sec-title { font-size:12.5px; font-weight:600; color:var(--fg); }
+.mm-hint { font-weight:400; font-size:11.5px; color:var(--faint); margin-left:6px; }
+.mm-channels { display:flex; flex-direction:column; gap:5px; }
+.mm-ch { display:flex; align-items:center; gap:9px; padding:8px 11px; border:1px solid var(--border,#2a3548);
+  border-radius:8px; cursor:pointer; font-size:12.5px; color:var(--fg); transition:border-color var(--t), background var(--t); }
+.mm-ch:hover { border-color:var(--accent); }
+.mm-ch.on { border-color:var(--accent); background:var(--accent-soft); }
+.mm-ch .mm-ch-name { font-weight:600; }
+.mm-ch .mm-ch-url { color:var(--faint); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.mm-ch .mm-dot { width:8px; height:8px; border-radius:50%; background:var(--border,#2a3548); flex-shrink:0; }
+.mm-ch.on .mm-dot { background:var(--accent); }
+.mm-add summary { cursor:pointer; font-size:12px; color:var(--muted); }
+.mm-add[open] summary { margin-bottom:6px; }
+.mm-add .model-grid { display:flex; flex-direction:column; gap:6px; }
+.mm-add-btn { align-self:flex-start; }
+.mm-assign { display:flex; flex-direction:column; gap:6px; }
+.mm-assign label { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+.mm-assign select { flex:1; padding:5px 8px; border:1px solid var(--border,#2a3548); border-radius:6px;
+  background:transparent; color:inherit; font-size:12px; min-width:0; text-overflow:ellipsis; cursor:pointer; }
+.mm-assign select:focus { outline:none; border-color:var(--accent); }
+.mm-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:2px; }
 .field { flex:1; display:flex; align-items:center; gap:8px; padding:0 12px;
          background:var(--bg); border:1px solid var(--border); border-radius:var(--r);
          transition:border-color var(--t), box-shadow var(--t); }
@@ -125,6 +166,11 @@ a.side-item:hover { color:var(--fg); }
 .btn:disabled { opacity:.4; cursor:not-allowed; }
 .btn-primary { background:var(--accent); color:#fff; font-weight:600; }
 .btn-primary:not(:disabled):hover { background:var(--accent-hover); }
+.pptx-status { font-size:12px; color:var(--muted); line-height:1.5; margin:6px 2px 0;
+  word-break:break-all; }
+.pptx-status a { color:var(--accent); font-weight:600; }
+.pptx-status.err { color:var(--danger); }
+.pptx-status .pxlog { color:var(--faint); display:block; }
 .btn-ghost { background:transparent; border-color:var(--border); color:var(--fg); }
 .btn-ghost:not(:disabled):hover { background:var(--accent-soft); border-color:var(--accent); }
 .btn-sm { padding:5px 11px; font-size:13px; }
@@ -365,6 +411,12 @@ a.side-item:hover { color:var(--fg); }
       导入文档
     </button>
     <input type="file" id="file-input" accept=".md,.txt,.docx,.pdf" hidden onchange="doImport(this)">
+    <button class="side-item" onclick="document.getElementById('pptx-input').click()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3M8 12l2.5-4L13 11.5 15 9l1 3"/></svg>
+      导入 PPTX 高亮讲解
+    </button>
+    <input type="file" id="pptx-input" accept=".pptx" hidden onchange="doPptxImport(this)">
+    <div class="pptx-status" id="pptx-status" hidden></div>
     <button class="side-item" id="btn-ai" onclick="toggleAi()">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10l-5.2 3 1.3 6-4.1-3.3L7.9 19l1.3-6L4 10l6.1-1.2z"/></svg>
       AI 协作
@@ -395,19 +447,6 @@ a.side-item:hover { color:var(--fg); }
         💾 存当前设计稿为模板
       </button>
       <div class="tpl-current" id="tpl-current">当前：AI 自动选风格</div>
-      <details class="side-item" id="model-panel" ontoggle="if(this.open)loadModels()">
-        <summary title="切换对话/视觉/生图模型，保存后立即生效">⚙ 模型设置</summary>
-        <div class="model-grid">
-          <label>对话 / 大纲<input id="model-chat" placeholder="agnes-2.0-flash" spellcheck="false"></label>
-          <label>视觉 / 审稿<input id="model-vision" placeholder="agnes-2.5-pro" spellcheck="false"></label>
-          <label>生图<input id="model-image" placeholder="agnes-image-2.5-flash" spellcheck="false"></label>
-          <div class="model-btns">
-            <button class="side-item" onclick="saveModels()">保存并生效</button>
-            <button class="side-item" onclick="resetModels()">恢复默认</button>
-          </div>
-          <div class="tpl-current" id="model-current"></div>
-        </div>
-      </details>
     </div>
   </details>
   <div class="side-label">品牌模板</div>
@@ -459,6 +498,13 @@ a.side-item:hover { color:var(--fg); }
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 3l14 9-14 9V3z"/></svg>
       生成
     </button>
+    <div class="model-quickbar" id="model-quickbar">
+      <button class="qb-trigger" id="qb-trigger" title="切换渠道与模型（对话/视觉/生图）" onclick="openModelModal()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.8 2.8M16.2 16.2L19 19M19 5l-2.8 2.8M7.8 16.2L5 19"/></svg>
+        <span id="qb-current">模型</span>
+        <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
   </header>
   <main class="main">
     <section class="panel" id="progress" hidden>
@@ -515,6 +561,56 @@ a.side-item:hover { color:var(--fg); }
   </main>
 </div>
 </div>
+<dialog class="modal" id="model-modal" aria-labelledby="mm-title" onclick="if(event.target===this)this.close()">
+  <div class="modal-frame mm-frame">
+    <div class="modal-head">
+      <span class="modal-title" id="mm-title">模型与渠道</span>
+      <span class="modal-meta">切换即全链路生效，无需重启</span>
+      <span class="sp"></span>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('model-modal').close()" aria-label="关闭">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="mm-body">
+      <section class="mm-sec">
+        <div class="mm-sec-title">渠道 <span class="mm-hint">接口地址 + API Key</span></div>
+        <div id="mm-channels" class="mm-channels"></div>
+        <details class="mm-add" id="mm-add-box">
+          <summary>＋ 添加渠道</summary>
+          <div class="model-grid">
+            <label>渠道名<input id="ch-name" maxlength="30" placeholder="如 智谱官方" spellcheck="false"></label>
+            <label>接口地址<input id="ch-url" placeholder="https://open.bigmodel.cn/api/paas/v4" spellcheck="false"></label>
+            <label>API Key<input id="ch-key" type="password" placeholder="sk-..." spellcheck="false"></label>
+            <button class="btn btn-primary btn-sm mm-add-btn" onclick="addChannel()">添加渠道并使用</button>
+          </div>
+        </details>
+      </section>
+      <section class="mm-sec">
+        <div class="mm-sec-title">模型清单 <span class="mm-hint" id="mm-ch-name"></span></div>
+        <div id="ch-models" class="ch-models"></div>
+        <div class="brand-row" style="margin-top:6px">
+          <input id="ch-model-input" style="flex:1" placeholder="添加模型名，如 glm-4-flash" spellcheck="false"
+                 onkeydown="if(event.key==='Enter')addChModel()">
+          <button class="btn btn-ghost btn-sm" onclick="addChModel()">＋ 添加</button>
+        </div>
+        <div class="side-note" id="ch-note" style="display:none;margin-top:4px">默认渠道直接使用 .env 配置；添加自己的渠道后即可维护模型清单。</div>
+      </section>
+      <section class="mm-sec">
+        <div class="mm-sec-title">用途分配 <span class="mm-hint">同一模型可身兼多职</span></div>
+        <div class="mm-assign">
+          <label>对话 / 大纲<select id="qb-chat" onchange="qbSetModel('chat', this.value)"></select></label>
+          <label>视觉 / 审稿<select id="qb-vision" onchange="qbSetModel('vision', this.value)"></select></label>
+          <label>生图<select id="qb-image" onchange="qbSetModel('image', this.value)"></select></label>
+        </div>
+        <div class="mm-foot">
+          <span class="side-note" id="model-current"></span>
+          <button class="btn btn-ghost btn-sm" onclick="resetModels()">恢复默认</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</dialog>
+
 <dialog class="modal" id="viewer" aria-labelledby="viewer-title">
   <div class="modal-frame">
     <div class="modal-head">
@@ -658,6 +754,58 @@ async function doImport(input) {
   $('btn-gen').disabled = true;
   setExports(true);
   startPolling();
+}
+
+// ---- pptx 高亮讲解：上传 → 后台导入 → 播放器（独立轮询，不干扰主生成流程）
+let pptxPolling = null;
+
+function renderPptxStatus(p) {
+  const el = $('pptx-status');
+  if (!p || p.status === 'idle') { el.hidden = true; return; }
+  el.hidden = false;
+  el.className = 'pptx-status' + (p.status === 'error' ? ' err' : '');
+  const last = (p.log || []).slice(-1)[0];
+  if (p.status === 'running') {
+    el.innerHTML = `<b>正在导入 ${esc(p.name || '')}…</b>` +
+      (last ? `<span class="pxlog">${esc(last.msg)}</span>` : '');
+    return;
+  }
+  if (p.status === 'error') {
+    el.innerHTML = `<b>导入失败</b><span class="pxlog">${esc(p.error || '')}` +
+      (p.hint ? `<br>${esc(p.hint)}` : '') + `</span>`;
+    return;
+  }
+  el.innerHTML = `<b>${esc(p.name || '')} · ${p.pages} 页 / ${p.units} 个讲解单元</b>` +
+    `<span class="pxlog"><a href="${esc(p.player)}" target="_blank" rel="noopener">▶ 打开高亮播放器</a></span>`;
+}
+
+async function pptxRefresh() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    renderPptxStatus(d.pptx);
+    if (d.pptx && (d.pptx.status === 'ready' || d.pptx.status === 'error')) {
+      clearInterval(pptxPolling);
+      pptxPolling = null;
+      if (d.pptx.status === 'ready') toast('高亮播放器已就绪');
+    }
+  } catch (e) { /* 轮询失败静默，下一次再试 */ }
+}
+
+async function doPptxImport(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  toast('正在上传 pptx…');
+  const r = await fetch('/api/pptx/import', {method: 'POST', body: fd});
+  const data = await r.json();
+  input.value = '';
+  if (!r.ok) { toast(data.error || '上传失败'); return; }
+  toast('已开始导入；导出底图约需十几秒');
+  if (pptxPolling) clearInterval(pptxPolling);
+  pptxPolling = setInterval(pptxRefresh, 1200);
+  pptxRefresh();
 }
 
 async function doRefine() {
@@ -848,23 +996,155 @@ async function selectTemplate(key, isActive) {
   refresh();
 }
 
+let _modelsCache = null;
+
 async function loadModels() {
   try {
     const d = await (await fetch('/api/models')).json();
-    $('model-chat').value = d.models.chat || '';
-    $('model-vision').value = d.models.vision || '';
-    $('model-image').value = d.models.image || '';
-    const n = Object.keys(d.overrides || {}).length;
-    $('model-current').textContent = n ? `已自定义 ${n} 档（保存后立即生效，无需重启）` : '当前使用 .env 默认配置';
+    _modelsCache = d;
+    renderModelModal(d);
+    renderQuickbar(d);
   } catch (e) { /* 模型面板失败不影响主流程 */ }
 }
 
-async function saveModels() {
-  const body = {chat: $('model-chat').value.trim(), vision: $('model-vision').value.trim(),
-                image: $('model-image').value.trim()};
+function renderQuickbar(d) {
+  $('qb-current').textContent = `模型：${d.models.chat || '默认'}`;
+}
+
+function renderModelModal(d) {
+  // 渠道列表：点击整行切换；自定义渠道带打码 key 与删除
+  const box = $('mm-channels');
+  box.innerHTML = '';
+  (d.channels || []).forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'mm-ch' + (c.id === d.current_channel ? ' on' : '');
+    row.onclick = () => qbSelectChannel(c.id);
+    const dot = document.createElement('span');
+    dot.className = 'mm-dot';
+    const nm = document.createElement('span');
+    nm.className = 'mm-ch-name';
+    nm.textContent = c.name;
+    row.append(dot, nm);
+    const tail = document.createElement('span');
+    tail.className = 'mm-ch-url';
+    tail.textContent = c.builtin ? '使用 .env 配置' : `${c.api_key} · ${c.base_url || ''}`;
+    row.append(tail);
+    if (!c.builtin) {
+      const del = document.createElement('button');
+      del.className = 'btn btn-ghost btn-sm';
+      del.textContent = '✕';
+      del.title = '删除渠道 ' + c.name;
+      del.onclick = (e) => { e.stopPropagation(); delChannel(c.id); };
+      row.append(del);
+    }
+    box.appendChild(row);
+  });
+  const cur = (d.channels || []).find(c => c.id === d.current_channel);
+  const isBuiltin = !cur || cur.builtin;
+  // 模型清单区（内置渠道走 .env，无清单可维护）
+  $('mm-ch-name').textContent = cur ? `当前：${cur.name}` : '';
+  const chips = $('ch-models');
+  chips.innerHTML = '';
+  if (!isBuiltin) {
+    (cur.models || []).forEach(m => {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.append(m);
+      const x = document.createElement('button');
+      x.textContent = '×'; x.title = '移除 ' + m;
+      x.onclick = () => removeChModel(m);
+      chip.appendChild(x);
+      chips.appendChild(chip);
+    });
+  }
+  $('ch-model-input').parentElement.style.display = isBuiltin ? 'none' : '';
+  $('ch-note').style.display = isBuiltin ? '' : 'none';
+  // 三档分配：候选 = 当前渠道清单 + 当前生效值
+  const list = isBuiltin ? [] : (cur.models || []);
+  fillQuickSelect('qb-chat', list, d.models.chat);
+  fillQuickSelect('qb-vision', list, d.models.vision);
+  fillQuickSelect('qb-image', list, d.models.image);
+  const n = Object.keys(d.overrides || {}).length;
+  $('model-current').textContent = n ? `已自定义 ${n} 档` : '当前使用 .env 默认配置';
+}
+
+function fillQuickSelect(id, list, current) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = '';
+  [...new Set([...list, current].filter(Boolean))].forEach(v => {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = v;
+    if (v === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (!sel.options.length) {
+    const opt = document.createElement('option');
+    opt.value = ''; opt.textContent = '默认';
+    sel.appendChild(opt);
+  }
+}
+
+async function qbSelectChannel(id) {
+  const {ok, data} = await post('/api/channels/select', {id});
+  if (!ok) { toast(data.error || '切换失败'); return; }
+  toast('已切换渠道，所有调用立即生效', 3000);
+  loadModels();
+}
+
+async function qbSetModel(kind, value) {
+  if (!value) return;
+  const body = {}; body[kind] = value;
   const {ok, data} = await post('/api/models', body);
-  if (!ok) { toast(data.error || '保存失败'); return; }
-  toast('模型已切换，立即生效', 4000);
+  if (!ok) { toast(data.error || '切换失败'); loadModels(); return; }
+  const names = {chat: '对话', vision: '视觉', image: '生图'};
+  toast(`${names[kind] || kind}模型已切换：${value}`, 2500);
+  loadModels();
+}
+
+function openModelModal() {
+  document.getElementById('model-modal').showModal();
+  loadModels();
+}
+
+async function addChannel() {
+  const body = {name: $('ch-name').value.trim(), base_url: $('ch-url').value.trim(),
+                api_key: $('ch-key').value.trim()};
+  if (!body.name || !body.base_url || !body.api_key) { toast('渠道名、接口地址、Key 都要填'); return; }
+  const {ok, data} = await post('/api/channels', body);
+  if (!ok) { toast(data.error || '添加失败'); return; }
+  await post('/api/channels/select', {id: data.channel.id});
+  $('ch-name').value = $('ch-url').value = $('ch-key').value = '';
+  $('mm-add-box').open = false;
+  toast('渠道已添加并启用', 3000);
+  loadModels();
+}
+
+async function delChannel(id) {
+  const cur = (_modelsCache?.channels || []).find(c => c.id === id);
+  if (!cur || cur.builtin) { toast('内置默认渠道不可删除'); return; }
+  if (!confirm(`删除渠道「${cur.name}」？其 API Key 将一并清除。`)) return;
+  const {ok, data} = await post('/api/channels/delete', {id});
+  if (!ok) { toast(data.error || '删除失败'); return; }
+  toast('已删除渠道，回到默认渠道');
+  loadModels();
+}
+
+async function addChModel() {
+  const m = $('ch-model-input').value.trim();
+  if (!m) return;
+  const ch = _modelsCache?.current_channel;
+  if (!ch || ch === 'default') { toast('默认渠道不维护清单，请先添加渠道'); return; }
+  const {ok, data} = await post('/api/channels/models', {channel: ch, model: m});
+  if (!ok) { toast(data.error || '添加失败'); return; }
+  $('ch-model-input').value = '';
+  loadModels();
+}
+
+async function removeChModel(m) {
+  const ch = _modelsCache?.current_channel;
+  const {ok, data} = await post('/api/channels/models',
+    {channel: ch, model: m, remove: true});
+  if (!ok) { toast(data.error || '移除失败'); return; }
   loadModels();
 }
 
@@ -1299,9 +1579,11 @@ function renderCards(s) {
 
 refresh();
 loadDecks();
+pptxRefresh();   // 恢复上次会话的 pptx 导入结果（若有）
 loadProjects();
 loadArtifacts();
 loadTemplates();
+loadModels();   // 顶栏模型快捷栏 + 侧栏面板首次渲染
 bindSelectionCapture();
 // Ctrl/⌘+J 呼出或收起 AI 协作面板
 document.addEventListener('keydown', e => {

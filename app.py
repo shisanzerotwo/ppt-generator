@@ -14,10 +14,13 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 import builder
 import critic
+import hl_anim
+import hl_layout
 import html_gen
 import image_gen
 import llm_util
 import outline
+import pptx_io
 import qa as qa_mod
 import quality as quality_mod
 import shot as shot_mod
@@ -34,7 +37,12 @@ DECKS_DIR = os.path.join(OUTPUT_DIR, "decks")
 PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
 ANIMATION_DIR = os.path.join(OUTPUT_DIR, "animation")
 VIDEOS_DIR = os.path.join(OUTPUT_DIR, "videos")
+PPTX_SRC_DIR = os.path.join(OUTPUT_DIR, "pptx_src")   # pptx 导入产物根（工作台入口）
+# 上传的原始稿放在**被服务目录之外**，避免 /pptx/<path> 把用户原稿也一起暴露
+PPTX_UPLOAD_DIR = os.path.join(OUTPUT_DIR, "pptx_uploads")
 _video_jobs = set()  # 正在合成视频的稿名（防同稿并发叠加 worker，功能测试缺陷-2）
+_pptx_jobs = set()   # 正在导入的 pptx 名（同上，防同稿并发叠加）
+MAX_PPTX_BYTES = 60 * 1024 * 1024  # 上传包体上限（zip 门禁的兜底，见 KNOWLEDGE 已知风险 M2）
 
 state = {
     "topic": "",
@@ -50,6 +58,18 @@ state = {
     "await_step": None,  # 分步确认时正在等待放行的步骤："outline" / "design" / None
     "stepwise": False,   # 是否在关键节点暂停等用户审阅（默认关，用户按需开启）
     "log": [],
+    # pptx 工作台（与上述生成流水线**完全独立**：不碰 phase，避免干扰前端既有轮询）
+    "pptx": {
+        "status": "idle",   # idle / running / ready / error
+        "log": [],
+        "name": None,       # 源稿主名
+        "out": None,        # 产物目录（绝对路径）
+        "player": None,     # 播放器 web 路径 /pptx/<name>/player/index.html
+        "pages": 0,
+        "units": 0,
+        "error": None,
+        "hint": "",
+    },
 }
 lock = threading.Lock()
 resume_event = threading.Event()   # 分步确认的放行信号
@@ -255,6 +275,11 @@ def _gen_image_page(i: int):
 
     只读写 state["slides"][i]，页间无共享可变状态，可安全并发；写操作均持锁。
     """
+    if not llm_util.images_enabled():
+        # 兜底闸：refine 的定点修改可能给页面新加 image_prompt，绕过 _without_images
+        with lock:
+            state["slides"][i]["imageStatus"] = "skipped"
+        return
     with lock:
         s = dict(state["slides"][i])
     prompt = s.get("image_prompt", "")
@@ -267,9 +292,10 @@ def _gen_image_page(i: int):
     cache_path = _image_cache_path(s.get("title", ""), prompt, s.get("points"))
     if os.path.exists(cache_path):
         try:
-            shutil.copyfile(cache_path, path)
+            # 经 copy_as_png 而非直接复制：缓存里可能是修复前存的 WebP（见 image_gen._write_png）
+            image_gen.copy_as_png(cache_path, path)
         except OSError:
-            pass  # 缓存读失败（被占用/被删）降级为现场生成，不炸整单（审计 L10）
+            pass  # 缓存读失败（被占用/被删/半截文件）降级为现场生成，不炸整单（审计 L10）
         else:
             with lock:
                 state["slides"][i]["image"] = f"/images/slide_{i}.png"
@@ -335,6 +361,22 @@ def _gen_images(indices=None):
             _gen_image_page(i)
 
 
+def _without_images(slides: list) -> list:
+    """配图关闭时掐掉配图：清空提示词，并把 image-* 布局降级为无图布局。
+
+    只清提示词不够——布局若仍是 image-right，_resolve_layout 会照用，设计稿与
+    PPTX 会留一块空白图位。布局置 None 后由 _resolve_layout 按要点数重选（center/cards/columns）。
+    """
+    out = []
+    for s in slides:
+        s = dict(s)
+        s["image_prompt"] = ""
+        if str(s.get("layout") or "").startswith("image"):
+            s["layout"] = None
+        out.append(s)
+    return out
+
+
 def _generation_worker(content: str, from_text: bool, density: str = "balanced"):
     t0 = time.time()
     try:
@@ -357,6 +399,9 @@ def _generation_worker(content: str, from_text: bool, density: str = "balanced")
             else:
                 slides = outline.generate_outline(content, density)
                 _save_outline_cache(content, False, slides, density)
+        if not llm_util.images_enabled():
+            slides = _without_images(slides)
+            _log("配图已关闭（runtime_config.json 的 images 键），全部走无图排版")
         with lock:
             state["slides"] = [
                 {"type": s.get("type", "content"), "title": s.get("title", ""),
@@ -499,8 +544,6 @@ def api_import():
     text = (data.get("text") or "").strip()
     if not isinstance(text, str) or len(text) < 30:
         return jsonify({"error": "文档内容过短，请提供更完整的文档"}), 400
-    if len(text.strip()) < 30:
-        return jsonify({"error": "文档内容过短，请提供更完整的文档"}), 400
     density = data.get("density") or "balanced"
     if density not in outline.DENSITY_HINTS:
         return jsonify({"error": "density 需为 sparse / balanced / dense"}), 400
@@ -636,6 +679,8 @@ def api_refine():
 
             _log(f"对话修改：{instruction}")
             new_slides = critic.refine_outline(cur_slides, instruction)
+            if not llm_util.images_enabled():
+                new_slides = _without_images(new_slides)
             with lock:
                 state["slides"] = [
                     {"type": s.get("type", "content"), "title": s.get("title", ""),
@@ -717,22 +762,48 @@ def api_export_txt():
 
 
 def _export_pdf_via_com(pptx_path: str, pdf_path: str) -> bool:
-    """用 PowerPoint COM 把 pptx 转 PDF，成功返回 True。"""
+    """用 PowerPoint COM 把 pptx 转 PDF，成功返回 True。
+
+    守卫照抄 `pptx_io.export_pages`（D1/S1 的教训，契约 v2 的 R-N4）：本机
+    PowerPoint 的 COM server 是**共享**的，`Dispatch` 会附着到用户正在用的实例，
+    所以三件事不能省：
+      ① **只 Close 自己新打开的那一份**（用"打开前后 Presentations.Count 是否增加"
+         判断归属）—— 用户正开着同一份稿时，关掉的可能是他带未保存修改的窗口；
+      ② 只有"应用启动前没有 POWERPNT.EXE"且"结束时一个稿都没有"才 Quit；
+      ③ **绝不触碰 `app.Visible`**（会把用户正在看的窗口藏起来）。
+    """
     try:
-        import win32com.client  # noqa
+        import win32com.client
     except ImportError:
         return False
     import pythoncom
+    had_powerpoint = pptx_io._powerpoint_running()
+    pythoncom.CoInitialize()
+    app = pres = None
+    we_opened = False
     try:
-        pythoncom.CoInitialize()
         app = win32com.client.Dispatch("PowerPoint.Application")
-        pres = app.Presentations.Open(pptx_path, WithWindow=False)
-        pres.SaveAs(pdf_path, 32)  # 32 = ppSaveAsPDF
-        pres.Close()
-        app.Quit()
+        pre_count = app.Presentations.Count
+        pres = app.Presentations.Open(os.path.abspath(pptx_path), ReadOnly=True,
+                                      Untitled=False, WithWindow=False)
+        we_opened = app.Presentations.Count > pre_count
+        pres.SaveAs(os.path.abspath(pdf_path), 32)  # 32 = ppSaveAsPDF
         return os.path.exists(pdf_path)
     except Exception:
         return False
+    finally:
+        try:
+            if pres is not None and we_opened:
+                pres.Close()
+        except Exception:
+            pass
+        try:
+            if app is not None and not had_powerpoint and app.Presentations.Count == 0:
+                app.Quit()
+        except Exception:
+            pass
+        app = pres = None
+        pythoncom.CoUninitialize()
 
 
 @app.route("/api/export_pdf", methods=["POST"])
@@ -895,7 +966,8 @@ def api_redesign():
         try:
             _design_and_save()
         finally:
-            state["phase"] = "ready"
+            with lock:
+                state["phase"] = "ready"
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"ok": True})
@@ -1134,10 +1206,13 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9._\-/:]{1,80}$")  # 模型名白名单：进
 
 @app.route("/api/models", methods=["GET"])
 def api_models_get():
-    """当前三档模型（对话/视觉/生图；设计档自动跟随对话档）+ 已覆盖项。"""
+    """当前三档模型（对话/视觉/生图；设计档自动跟随对话档）+ 渠道列表 + 已覆盖项。"""
     models = {k: llm_util.get_model(k) for k in ("chat", "vision", "image")}
     overrides = {k: v for k, v in llm_util._load_runtime().items() if k in models}
-    return jsonify({"models": models, "overrides": overrides})
+    cfg = llm_util._load_runtime()
+    return jsonify({"models": models, "overrides": overrides,
+                    "channels": llm_util.list_channels_public(),
+                    "current_channel": cfg.get("current_channel") or "default"})
 
 
 @app.route("/api/models", methods=["POST"])
@@ -1158,6 +1233,55 @@ def api_models_set():
     applied = {k: llm_util.get_model(k) for k in ("chat", "vision", "image")}
     _log(f"模型已切换：{'、'.join(f'{k}={v}' for k, v in applied.items())}")
     return jsonify({"ok": True, "models": applied, "overrides": cfg})
+
+
+@app.route("/api/channels", methods=["POST"])
+def api_channels_add():
+    """添加自定义渠道（名称 + 接口地址 + API Key + 可选初始模型清单）。"""
+    data = request.get_json(force=True) if request.data else {}
+    try:
+        ch = llm_util.add_channel(data.get("name"), data.get("base_url"),
+                                  data.get("api_key"), data.get("models"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    _log(f"已添加渠道：{ch['name']}")
+    return jsonify({"ok": True, "channel": llm_util.channel_public(ch)})
+
+
+@app.route("/api/channels/delete", methods=["POST"])
+def api_channels_delete():
+    """删除自定义渠道；删当前渠道时自动回退默认渠道。内置默认渠道不可删。"""
+    data = request.get_json(force=True) if request.data else {}
+    if not llm_util.delete_channel(str(data.get("id") or "")):
+        return jsonify({"error": "渠道不存在或不可删除"}), 403
+    _log("已删除渠道")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/channels/select", methods=["POST"])
+def api_channels_select():
+    """设为当前渠道：之后所有 LLM 调用（含生图/设计）走该渠道的地址与 Key。"""
+    data = request.get_json(force=True) if request.data else {}
+    try:
+        llm_util.select_channel(str(data.get("id") or ""))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    ch = llm_util.get_current_channel()
+    _log(f"当前渠道：{ch.get('name') or '默认（.env）'}")
+    return jsonify({"ok": True, "current_channel": ch.get("id") or "default"})
+
+
+@app.route("/api/channels/models", methods=["POST"])
+def api_channels_models():
+    """往渠道添加/移除模型名（界面「模型清单」，供三档下拉候选）。"""
+    data = request.get_json(force=True) if request.data else {}
+    try:
+        ch = llm_util.channel_add_model(str(data.get("channel") or ""),
+                                        data.get("model"),
+                                        remove=bool(data.get("remove")))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "channel": llm_util.channel_public(ch)})
 
 
 _HEX6 = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -1275,6 +1399,107 @@ def api_export_video():
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"ok": True, "queued": True})
+
+
+# ---------------------------------------------------------------- pptx 工作台
+# 上传 pptx → COM 导出保真底图 → 行级高亮播放器。与上面那条"AI 生成"流水线
+# **完全独立**：状态放在 state["pptx"] 里、不碰 phase，前端沿用既有 /api/status 轮询。
+
+def _pptx_log(msg: str):
+    with lock:
+        log = state["pptx"]["log"]
+        log.append({"time": time.strftime("%H:%M:%S"), "msg": msg})
+        state["pptx"]["log"] = log[-60:]
+
+
+def _pptx_set(**kw):
+    with lock:
+        state["pptx"].update(kw)
+
+
+def _pptx_worker(pptx_path: str, name: str):
+    """后台跑导入 + 播放器；异常一律落成中文 error/hint，不让堆栈冒到前端。"""
+    out_dir = os.path.join(PPTX_SRC_DIR, name)
+    try:
+        _pptx_log("读取稿件形状…")
+        deck, skipped = pptx_io.read_pages(pptx_path, export_width_px=1920)
+        _pptx_log(f"共 {len(deck.pages)} 页；过滤 {len(skipped)} 个空/隐藏形状")
+
+        if not pptx_io.powerpoint_available():
+            raise pptx_io.PptxError("未检测到 PowerPoint，无法导出保真底图", "NO_POWERPOINT",
+                                    "安装 Microsoft Office（含 PowerPoint）后重试")
+        _pptx_log("用 PowerPoint 导出底图（这一步要等十几秒）…")
+        paths = pptx_io.export_pages(pptx_path, os.path.join(out_dir, "bg"), width=1920)
+        for i, page in enumerate(deck.pages):
+            page["bg"] = f"bg/slide_{i + 1}.png"
+        _pptx_log(f"底图 {len(paths)} 张已导出")
+
+        with open(os.path.join(out_dir, "deck.json"), "w", encoding="utf-8") as f:
+            json.dump(pptx_io.deck_to_dict(deck), f, ensure_ascii=False)
+
+        pages_units = [hl_layout.build_units(hl_layout.page_shapes(p, deck))
+                       for p in deck.pages]
+        height_px = round(deck.export_width_px * deck.height_emu / deck.width_emu)
+        # bg_base_dir：deck.json 的 bg 相对 out_dir，播放器写在 out_dir/player/ 下
+        hl_anim.build_player(
+            os.path.join(out_dir, "player"), [p["bg"] for p in deck.pages], pages_units,
+            title=name, canvas_width_px=deck.export_width_px, canvas_height_px=height_px,
+            bg_base_dir=out_dir)
+
+        units = sum(len(u) for u in pages_units)
+        _pptx_set(status="ready", name=name, out=out_dir,
+                  player=f"/pptx/{quote(name)}/player/index.html",
+                  pages=len(deck.pages), units=units, error=None, hint="")
+        _pptx_log(f"完成：{len(deck.pages)} 页 / {units} 个讲解单元")
+    except pptx_io.PptxError as exc:
+        _pptx_set(status="error", error=exc.message, hint=exc.hint)
+        _pptx_log(f"失败：{exc.message}")
+    except Exception as exc:  # noqa: BLE001
+        _pptx_set(status="error", error=f"内部错误：{type(exc).__name__}: {exc}", hint="")
+        _pptx_log(f"失败：{exc}")
+    finally:
+        with lock:
+            _pptx_jobs.discard(name)
+
+
+@app.route("/api/pptx/import", methods=["POST"])
+def api_pptx_import():
+    """上传 .pptx → 后台导入 → 出高亮播放器（进度见 /api/status 的 pptx 字段）。"""
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "未收到文件"}), 400
+    raw_name = os.path.basename(f.filename or "")
+    if not raw_name.lower().endswith(".pptx"):
+        return jsonify({"error": "只支持 .pptx（旧的 .ppt 请先在 PowerPoint 里"
+                                 "另存为 .pptx）"}), 400
+    name = re.sub(r'[\\/:*?"<>|]', "_", os.path.splitext(raw_name)[0]).strip() or "deck"
+
+    with lock:
+        if state["pptx"]["status"] == "running" or name in _pptx_jobs:
+            return jsonify({"error": "正在导入中，请等这一次完成"}), 409
+
+    # 包体兜底：M2（zip bomb 无闸门）本轮未修，上传入口是**新增的远程面**，
+    # 先按上传体积挡一道；真正的解压总量/压缩比闸门应落在 read_pages 前置。
+    if (request.content_length or 0) > MAX_PPTX_BYTES:
+        return jsonify({"error": f"文件过大，上限 {MAX_PPTX_BYTES // 1024 // 1024} MB"}), 413
+
+    os.makedirs(PPTX_UPLOAD_DIR, exist_ok=True)
+    saved = os.path.join(PPTX_UPLOAD_DIR, f"{name}.src.pptx")
+    f.save(saved)
+    with lock:
+        _pptx_jobs.add(name)
+        state["pptx"].update({"status": "running", "log": [], "name": name,
+                              "error": None, "hint": "", "player": None,
+                              "pages": 0, "units": 0})
+    _pptx_log(f"收到 {raw_name}（{os.path.getsize(saved) // 1024} KB），开始导入…")
+    threading.Thread(target=_pptx_worker, args=(saved, name), daemon=True).start()
+    return jsonify({"ok": True, "name": name})
+
+
+@app.route("/pptx/<path:filename>")
+def pptx_files(filename):
+    """pptx 导入产物（播放器 + bg/*.png）。send_from_directory 内部做 safe_join。"""
+    return send_from_directory(PPTX_SRC_DIR, filename)
 
 
 @app.route("/animation/<path:filename>")
