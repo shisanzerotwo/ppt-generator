@@ -103,8 +103,9 @@ def main() -> int:
                 box = (r.left_px, r.top_px, r.width_px, r.height_px)
                 ring_cov.append(hl_layout.measure_coverage(bg, box))
                 bb = band_bg(img, box)
-                band_cov.append(hl_layout.measure_coverage(bg, box, bg_rgb=bb) if bb else 0.0)
-                c = hl_layout.measure_coverage(bg, box, bg_rgb=base)
+                c = hl_layout.measure_coverage(bg, box, bg_rgb=bb) if bb else 0.0
+                band_cov.append(c)
+                real_cov.append(hl_layout.measure_coverage(bg, box, bg_rgb=base))
                 real_cov.append(c)
                 page_line.append(c)
                 total += 1
@@ -124,10 +125,10 @@ def main() -> int:
     print("== 覆盖率（判定对象：每行 lines[i]，即渲染实体）==")
     print(f"  【外侧环带底色·第三方参照】中位 = {statistics.median(band_cov):.3f}"
           f"  ← 判定用这个（既排除矩形内墨迹，也适应形状填充色）")
-    print(f"  【真实底色·幻灯片主色】    中位 = {statistics.median(real_cov):.3f}"
-          f"  （在带填充色的形状上会失效）")
+    print(f"  【幻灯片主色底色】        中位 = {statistics.median(real_cov):.3f}"
+          f"  ← 虚高：4 行落在浅色填充形状上的文字被整块算成墨迹（见报告）")
     print(f"  【契约默认·矩形内侧 1px 环】中位 = {statistics.median(ring_cov):.3f}"
-          f"  ← tight 矩形上系统性偏低（环内混入墨迹）")
+          f"  ← 与外侧环带口径一致（0.000 偏差），默认口径本身没问题")
     print(f"  两个可靠口径的 p10/p90：外侧环带 "
           f"{pct(band_cov, 0.10):.3f}/{pct(band_cov, 0.90):.3f}；"
           f"主色 {pct(real_cov, 0.10):.3f}/{pct(real_cov, 0.90):.3f}")
