@@ -520,6 +520,14 @@ def read_pages(pptx_path: str, mode: str = "faithful",
     if not slides:
         raise PptxError("PPTX 中没有任何幻灯片", "PPTX_EMPTY", "换一份有内容的稿子")
 
+    if prs.slide_width is None or prs.slide_height is None:
+        # M4：缺 `p:sldSz` 的包会让下面的 int(None) 抛裸 TypeError —— 那行在
+        # Presentation() 的 try 之外，于是"用户稿子畸形"被归成 INTERNAL(5)，
+        # 把排查方向引到"这是我们的 bug"上。这里显式判空，归回 PPTX_UNREADABLE(3)。
+        raise PptxError(
+            f"PPTX 无法打开：{os.path.basename(abs_path)}"
+            "（缺少幻灯片尺寸定义 p:sldSz）", "PPTX_UNREADABLE",
+            "用 PowerPoint 打开后另存一次，或换一份稿子")
     width_emu = int(prs.slide_width)
     height_emu = int(prs.slide_height)
     skipped: list[dict] = []

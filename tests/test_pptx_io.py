@@ -539,3 +539,30 @@ def test_gate_lets_normal_deck_through(tmp_path):
     pptx_io._check_package_safety(src)
     deck, _ = pptx_io.read_pages(src)
     assert len(deck.pages) == 2
+
+
+# ---------------------------------------------------------------- M4 缺 sldSz
+
+def _deck_without_sldsz(tmp_path):
+    """真 pptx 里把 `<p:sldSz/>` 删掉 → `prs.slide_width` 变 None。"""
+    import re as _re
+    import zipfile as _zip
+    src = _blank_deck(tmp_path / "with_sldsz.pptx", pages=1)
+    out = tmp_path / "no_sldsz.pptx"
+    with _zip.ZipFile(src) as zin, _zip.ZipFile(str(out), "w", _zip.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "ppt/presentation.xml":
+                data = _re.sub(rb"<p:sldSz\b[^>]*/>", b"", data)
+            zout.writestr(item, data)
+    return str(out)
+
+
+def test_missing_sldsz_is_unreadable_not_internal(tmp_path):
+    """缺 `p:sldSz` 要归 PPTX_UNREADABLE(3)，不能裸 TypeError 退化成 INTERNAL(5)。"""
+    path = _deck_without_sldsz(tmp_path)
+    assert Presentation(path).slide_width is None      # 前提成立
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(path)
+    assert ei.value.code == "PPTX_UNREADABLE"
+    assert "sldSz" in ei.value.message and ei.value.hint
