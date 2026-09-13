@@ -75,6 +75,7 @@
 | **未修** | M3 `inner_w_pt <= 0` 的形状被**静默丢弃** | AUDIT_REPORT §2 M3 | 契约 §4.3 要求"记 warning"，实现只做到"不产出 Unit"，`build_units` 也没有 `skipped` 出口 → "这里为什么没有高亮"无从排查。修法与 `read_pages.skipped` 同构（加可选收集器），成本极低 |
 | **未修** | M4 缺 `p:sldSz` → 裸 `TypeError`，错误码从 3 退化成 5 | AUDIT_REPORT §2 M4 | `prs.slide_width` 可为 `None`，而 `int(...)` 那行在 `read_pages` 的 `try` **之外** → 用户稿畸形却被告知"这是我们的 bug"（`INTERNAL`），把排查引向错误方向 |
 | **未修**（调用侧已规避） | L4 播放器不校验底图存在 → 黑屏静默通过 | AUDIT_REPORT §2 L4 | 缺图时 `<img>` 触发 `onerror`，`hl.ready` **照样 resolve** → 截出黑帧喂给 ffmpeg。本轮规避：`shot_player`（`video --mode step` 走它）与 `cli animate` 都先校验底图存在/`naturalWidth>0`；**播放器本身仍未校验**，自己写脚本要记得 |
+| **未修**（实测印证） | F3 补充：**工作台路径实测 27s / 10 页** | 2026-09-13 复查实测 | 起 Flask 后 `POST /api/pptx/import` 上传 `b_multislide.pptx`：12:44:34 → 12:45:01 共 **27 秒**（与 F3 的冷调用 2.64s/页同级）；而 CLI 单跑 `import` 8.22s 是同进程复用下的表现。→ **不是 Flask 特有 bug**，而是"每次 import 都新建并 Quit PowerPoint"的代价；优化方向是复用实例，但需与 S1（Close 关掉用户稿）/ D1（实例共享）的风险权衡 |
 | **未修** | L5 `had_powerpoint` 采样窗口 TOCTOU | AUDIT_REPORT §2 L5 | 采样在 `DispatchEx` **之前**：用户恰好在这个窗口里启动 PowerPoint（还没开稿）→ 结束时 `had_powerpoint=False` 且 `Count==0` → Quit 掉用户刚启动的 PowerPoint。D1 的加固堵住了"事先开着"，没堵住"这期间打开" |
 | **未修** | L6 共享 PowerPoint 实例上**没有互斥** | AUDIT_REPORT §2 L6 | `export_pages` 全程无锁。两次并发导出（工作台 + CLI，或 >50 页后台路径）会在**同一个**实例上交错。守卫方向偏保守（少 Quit）故不破坏数据，但 `Export` 可能因模态状态失败，且失败文案把责任推给用户 |
 | **未修** | L7 `measure_coverage` 用 `0.0` 重载三种语义 | AUDIT_REPORT §2 L7 | 矩形退化 / 完全在图外 / 真的没墨迹，三者都返回 `0.0`。若高亮定位算错到图片外，度量给出的证据与"这块是空白"**完全一样** → 度量丧失了发现"定位算错"的能力。建议越界/退化返回 `None` |
