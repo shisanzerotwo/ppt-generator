@@ -482,3 +482,60 @@ def test_export_pages_rejects_bad_width(monkeypatch, tmp_path):
     with pytest.raises(pptx_io.PptxError) as ei:
         pptx_io.export_pages(src, str(tmp_path / "bg"), width=0)
     assert ei.value.code == "BAD_ARGS"
+
+
+# ---------------------------------------------------------------- M2 包体闸门
+
+def _zip_with(tmp_path, name, entries):
+    import zipfile
+    path = tmp_path / name
+    with zipfile.ZipFile(str(path), "w", zipfile.ZIP_DEFLATED) as z:
+        for entry, data in entries.items():
+            z.writestr(entry, data)
+    return str(path)
+
+
+def test_zip_bomb_high_ratio_is_rejected_before_reading(tmp_path):
+    """64 MiB 全零塞进一个小条目：压缩比 1000:1 级，必须在解析前拦下。"""
+    path = _zip_with(tmp_path, "bomb.pptx",
+                     {"[Content_Types].xml": b"\x00" * (16 * 1024 * 1024)})
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(path)
+    assert ei.value.code == "PPTX_UNREADABLE"
+    assert "压缩比" in ei.value.message and ei.value.hint
+
+
+def test_zip_bomb_total_size_is_rejected(tmp_path, monkeypatch):
+    """解压总量超限也要拦（单条压缩比可能不触发，但总量触发）。"""
+    monkeypatch.setattr(pptx_io, "MAX_EXTRACT_BYTES", 1024)
+    path = _zip_with(tmp_path, "big.pptx", {"a.xml": b"x" * 4096})
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(path)
+    assert "解压后体积" in ei.value.message
+
+
+def test_small_entry_with_high_ratio_is_not_flagged(tmp_path):
+    """阳性对照的另一面：小条目压缩比高**不**该被拦（否则会误伤正常稿）。
+
+    真实 pptx 里有大量几百字节的小 XML，压缩比轻松上 100:1。
+    """
+    path = _zip_with(tmp_path, "ok.pptx", {"tiny.xml": b"\x00" * 4096})
+    info = pptx_io._check_package_safety
+    info(path)   # 不抛即通过（后续 Presentation() 失败与此无关）
+
+
+def test_gate_lets_non_zip_through_to_classifier(tmp_path):
+    """不是 zip 时闸门放行，归类仍由 _classify_bad_package 负责（各司其职）。"""
+    p = tmp_path / "junk.pptx"
+    p.write_bytes(b"this is definitely not a zip")
+    pptx_io._check_package_safety(str(p))          # 不抛
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(str(p))
+    assert ei.value.code == "PPTX_UNREADABLE"
+
+
+def test_gate_lets_normal_deck_through(tmp_path):
+    src = _blank_deck(tmp_path / "normal.pptx", pages=2)
+    pptx_io._check_package_safety(src)
+    deck, _ = pptx_io.read_pages(src)
+    assert len(deck.pages) == 2

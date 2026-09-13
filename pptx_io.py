@@ -23,6 +23,7 @@
 
 import os
 import sys
+import zipfile
 from dataclasses import asdict, dataclass, field
 
 from pptx import Presentation
@@ -38,7 +39,17 @@ _EMU_PER_PT = qa.EMU_PER_PT
 _DEFAULT_MARGIN_LR = 91440   # 0.1in = 7.2pt（python-pptx 默认内边距）
 _DEFAULT_MARGIN_TB = 45720   # 0.05in = 3.6pt
 _OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # 加密 Office 文件是 OLE2 复合文档
-_ZIP_MAGIC = b"pk\x03\x04"
+_ZIP_MAGIC = b"PK\x03\x04"   # zip 本地文件头签名；**大小写敏感**，小写 pk 永远匹配不上
+
+# 包体安全闸门（M2）。阈值依据：
+#   解压总量 512 MB —— 真实汇报稿的底图/字体全算上也很少超过几十 MB；512 MB 已是
+#     极端宽松的上限，再大基本只可能是刻意构造。
+#   单条压缩比 200:1 —— 纯 XML 文本的压缩比一般在 3~20 之间；200:1 只有"整条都是
+#     可无限压缩的重复字节"才可能达到。**并且**附带 8 MiB 绝对体积下限：
+#     压缩比只有作用在大条目上才可疑，避免误伤"某个几百字节的小 XML 恰好压得很好"。
+MAX_EXTRACT_BYTES = 512 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 200.0
+RATIO_MIN_BYTES = 8 * 1024 * 1024
 
 _NO_POWERPOINT_HINT = (
     "请安装 Microsoft Office（含 PowerPoint），或改用 --mode redesign / 直接跳过 faithful 模式。"
@@ -447,6 +458,47 @@ def _classify_bad_package(path: str) -> PptxError:
                      "用 PowerPoint 打开后另存一次，或换一份稿子")
 
 
+def _check_package_safety(path: str) -> None:
+    """包体闸门（M2）：**不解压**，只读 zip 中央目录里声明的体积与压缩比。
+
+    为什么必须在 `Presentation()` 之前：python-pptx 一旦开始解析就会把条目读成
+    Python 字节串，而"读"是不可逆的 —— 实测一个 64 KB 的包（64 MiB 全零塞进
+    `[Content_Types].xml`，压缩比 1029:1）让 **141 MB** 进内存，之后才因 XML 解析
+    失败被拒。`infolist()` 读的是中央目录里的**声明值**，零解压成本，能在展开前拦下。
+
+    不是 zip / 读不出目录时**直接放行** —— 那是"包损坏"的活，交给
+    `_classify_bad_package` 归类，两处各司其职。
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            infos = zf.infolist()
+    except (zipfile.BadZipFile, OSError):
+        return
+
+    total = 0
+    worst_name, worst_ratio, worst_size = "", 0.0, 0
+    for info in infos:
+        size = int(info.file_size or 0)
+        total += size
+        if info.compress_size:
+            ratio = size / info.compress_size
+            if ratio > worst_ratio:
+                worst_name, worst_ratio, worst_size = info.filename, ratio, size
+
+    if total > MAX_EXTRACT_BYTES:
+        raise PptxError(
+            f"包体异常：解压后体积 {total / 1024 / 1024:.0f} MB，"
+            f"超过上限 {MAX_EXTRACT_BYTES // 1024 // 1024} MB",
+            "PPTX_UNREADABLE",
+            "请用 PowerPoint 重新导出一份；若确有超大素材，请先压缩图片再导出")
+    if worst_ratio > MAX_COMPRESSION_RATIO and worst_size > RATIO_MIN_BYTES:
+        raise PptxError(
+            f"包体异常：{worst_name} 单条压缩比 {worst_ratio:.0f}:1"
+            f"（{worst_size / 1024 / 1024:.0f} MB），超过上限 {MAX_COMPRESSION_RATIO:.0f}:1",
+            "PPTX_UNREADABLE",
+            "这份文件很可能是被刻意构造的压缩炸弹；请用 PowerPoint 重新导出一份")
+
+
 def read_pages(pptx_path: str, mode: str = "faithful",
                export_width_px: int = 1920) -> tuple[DeckIR, list[dict]]:
     """逐页形状清单。返回 (DeckIR, skipped)；skipped 与 DeckIR.skipped 同对象。
@@ -458,6 +510,7 @@ def read_pages(pptx_path: str, mode: str = "faithful",
         raise PptxError(f"找不到文件：{pptx_path}", "PPTX_NOT_FOUND",
                         "检查路径是否正确（建议用绝对路径）")
     abs_path = os.path.abspath(pptx_path)
+    _check_package_safety(abs_path)   # M2：必须在 Presentation() 之前
     try:
         prs = Presentation(abs_path)
     except Exception as exc:  # noqa: BLE001  包损坏/加密统一在此归类
