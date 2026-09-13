@@ -9,9 +9,11 @@ import io
 import os
 
 import pytest
+from PIL import Image
 
 import app as app_mod
 import image_gen
+import llm_util
 
 
 @pytest.fixture
@@ -87,11 +89,42 @@ def test_image_cache_hit_skips_generation(tmp_path, monkeypatch):
     try:
         cache = app_mod._image_cache_path("t", "画一棵树", ["p：1"])
         os.makedirs(os.path.dirname(cache), exist_ok=True)
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), (255, 0, 0)).save(buf, "PNG")
         with open(cache, "wb") as f:
-            f.write(b"\x89PNG fake")  # 预放缓存（内容不作校验，本用例只看接线）
+            f.write(buf.getvalue())  # 真 PNG（复用要过 image_gen.copy_as_png 的格式校验）
         app_mod._gen_images()
         assert calls == []  # 命中缓存：生图一次都不调
         assert app_mod.state["slides"][0]["imageStatus"] == "done"
+    finally:
+        with app_mod.lock:
+            app_mod.state["slides"] = []
+
+
+def test_image_cache_hit_transcodes_webp_to_png(tmp_path, monkeypatch):
+    """缓存里可能是接新供应商之前存的 WebP：复用后落盘的 slide_0.png 必须是真 PNG。
+
+    python-pptx 只认 PNG/JPEG 等少数格式，WebP 字节塞进 .png 会让导出直接报
+    unsupported image format，所以缓存复用这条路也必须过转码。
+    """
+    monkeypatch.setattr(app_mod, "IMAGES_DIR", str(tmp_path))
+    calls = []
+    monkeypatch.setattr(image_gen, "generate_image", lambda p, s: calls.append(p))
+    with app_mod.lock:
+        app_mod.state["slides"] = [{"title": "t", "points": ["p：1"], "image_prompt": "画一棵树",
+                                    "image": None, "imageStatus": "pending",
+                                    "review": {"ok": True, "reason": "", "tries": 0}}]
+    try:
+        cache = app_mod._image_cache_path("t", "画一棵树", ["p：1"])
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), (255, 0, 0)).save(buf, "WEBP")
+        with open(cache, "wb") as f:
+            f.write(buf.getvalue())
+        app_mod._gen_images()
+        assert calls == []  # 仍命中缓存，不重新生图
+        with open(os.path.join(str(tmp_path), "slide_0.png"), "rb") as f:
+            assert f.read().startswith(b"\x89PNG")
     finally:
         with app_mod.lock:
             app_mod.state["slides"] = []
@@ -110,6 +143,42 @@ def test_image_cache_read_failure_degrades_to_generate(tmp_path, monkeypatch):
         os.makedirs(cache, exist_ok=True)  # 缓存位是个目录 → copyfile 抛 OSError → 降级现场生成（审计 L10）
         app_mod._gen_images()
         assert app_mod.state["slides"][0]["imageStatus"] == "done"
+    finally:
+        with app_mod.lock:
+            app_mod.state["slides"] = []
+
+
+# ---------------- 配图总开关（runtime_config.json 的 images 键） ----------------
+
+def test_without_images_clears_prompt_and_downgrades_layout():
+    """关配图要连布局一起降级：留着 image-right 会让设计稿/PPTX 空出半页图位。"""
+    slides = [
+        {"type": "cover", "title": "封面", "points": [], "image_prompt": "画一幅画", "layout": None},
+        {"type": "content", "title": "正文", "points": ["a：1"], "image_prompt": "画棵树", "layout": "image-right"},
+        {"type": "content", "title": "对比", "points": ["a：1"], "image_prompt": "", "layout": "columns"},
+    ]
+    out = app_mod._without_images(slides)
+
+    assert [s["image_prompt"] for s in out] == ["", "", ""]
+    assert [s["layout"] for s in out] == [None, None, "columns"]  # columns 不是 image-*，保留
+    assert slides[1]["layout"] == "image-right"  # 不改原对象
+
+
+def test_images_disabled_skips_generation(tmp_path, monkeypatch):
+    """images=false 时一页都不生图（即便页面带着提示词）。"""
+    monkeypatch.setattr(app_mod, "IMAGES_DIR", str(tmp_path))
+    monkeypatch.setattr(llm_util, "RUNTIME_CONFIG_PATH", str(tmp_path / "runtime_config.json"))
+    llm_util._save_runtime({"images": False})
+    calls = []
+    monkeypatch.setattr(image_gen, "generate_image", lambda p, s: calls.append(p))
+    with app_mod.lock:
+        app_mod.state["slides"] = [{"title": "t", "points": ["p：1"], "image_prompt": "画一棵树",
+                                    "image": None, "imageStatus": "pending",
+                                    "review": {"ok": True, "reason": "", "tries": 0}}]
+    try:
+        app_mod._gen_images()
+        assert calls == []
+        assert app_mod.state["slides"][0]["imageStatus"] == "skipped"
     finally:
         with app_mod.lock:
             app_mod.state["slides"] = []

@@ -130,7 +130,6 @@ def revise_target(slides: list[dict], target: dict, instruction: str):
 
 def refine_outline(slides: list[dict], instruction: str) -> list[dict]:
     """按用户自然语言指令修改整份大纲，返回同结构 slides。"""
-    import json
     cur = json.dumps(
         [{"type": s.get("type"), "title": s.get("title"), "points": s.get("points"),
           "image_prompt": s.get("image_prompt"), "chart": s.get("chart")}

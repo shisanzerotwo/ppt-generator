@@ -111,7 +111,9 @@ def restore():
     app_mod.state.update(before)
 
 
-def test_api_templates_lists(client):
+def test_api_templates_lists(client, tmp_path, monkeypatch):
+    # 隔离自定义模板目录：真实使用会在 output/templates 留下用户模板，不应影响该断言
+    monkeypatch.setattr(tmpl, "CUSTOM_DIR", str(tmp_path))
     d = client.get("/api/templates").get_json()
     assert len(d["templates"]) == len(style_mod.STYLE_LIBRARY)
 

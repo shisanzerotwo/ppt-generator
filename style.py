@@ -5,14 +5,9 @@
 """
 
 
-import os
 import re
 
-from dotenv import load_dotenv
-
-from zhipuai import ZhipuAI
-
-load_dotenv()
+from llm_util import get_model, llm_client
 
 # 与 app._HTML_THEMES / builder.THEMES 的映射（pptx 降级导出用近似色板）
 THEME_MAP = {
@@ -91,16 +86,10 @@ SELECT_PROMPT = """你是幻灯片视觉总监。根据 PPT 主题与页面内�
 只输出 JSON：{{"key": "风格key", "reason": "一句话理由"}}，不要输出其他文字。"""
 
 
-def _client():
-    api_key = os.getenv("ZHIPUAI_API_KEY")
-    if not api_key or api_key == "your-key-here":
-        raise RuntimeError("未配置 ZHIPUAI_API_KEY")
-    return ZhipuAI(api_key=api_key, base_url=os.getenv("ZHIPUAI_BASE_URL") or None, timeout=60.0)
-
-
 def _call_llm(prompt: str) -> str:
-    resp = _client().chat.completions.create(
-        model=os.getenv("ZHIPUAI_CHAT_MODEL") or "agnes-2.0-flash",
+    # 120s：风格选择输出短，但与大纲同一通道；模型变慢时 60s 会跟着拖挂
+    resp = llm_client(120.0).chat.completions.create(
+        model=get_model("chat"),
         messages=[{"role": "user", "content": prompt}],
         max_tokens=500,
         temperature=0.2,

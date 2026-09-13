@@ -1,13 +1,6 @@
 """第一步：调 glm-4-flash 把主题文字转成结构化大纲 JSON。"""
 
 import json
-import os
-import re
-
-from dotenv import load_dotenv
-from zhipuai import ZhipuAI
-
-load_dotenv()
 
 PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个主题，请生成一份章节化的 PPT 页面序列。
 
@@ -159,7 +152,6 @@ def _generate_once(client, model, prompt_text, feedback=""):
 
 def _self_critique(client, model, label, slides) -> str:
     """自评大纲结构是否完整，返回需改进的问题描述；无问题返回空串。"""
-    import json
     cur = json.dumps([{"type": s["type"], "title": s["title"]} for s in slides], ensure_ascii=False)
     prompt = (
         f"主题「{label}」的 PPT 大纲如下（只列 type 和 title）：\n{cur}\n\n"
@@ -179,12 +171,11 @@ def _self_critique(client, model, label, slides) -> str:
 
 
 def _client():
-    api_key = os.getenv("ZHIPUAI_API_KEY")
-    if not api_key or api_key == "your-key-here":
-        raise RuntimeError("未配置 ZHIPUAI_API_KEY，请复制 .env.example 为 .env 并填入 Key")
-    base_url = os.getenv("ZHIPUAI_BASE_URL") or None
-    from llm_util import get_model
-    return ZhipuAI(api_key=api_key, base_url=base_url, timeout=60.0), get_model("chat")
+    from llm_util import get_model, llm_client
+    # 300s：大纲是 8~10 页的结构化 JSON（长输出），实测在较慢模型上要 ~190s
+    # （2026-09-13 实测 OmniRoute 路由的 big-pickle：189.7s）。原先的 60s 会必然超时，
+    # 表现为日志「生成中断：大纲生成失败（已重试 1 次）: Request timed out.」
+    return llm_client(300.0), get_model("chat")
 
 
 _CONTENT_LAYOUT_ROTATION = ["image-right", "cards", "image-left", "columns", "image-top", "center", "image-full"]
