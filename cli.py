@@ -197,6 +197,9 @@ def _cmd_import(args) -> dict:
     for item in layout_skipped:
         _log(f"[警告] 第{item['page_index'] + 1}页 形状'{item['shape_name']}' "
              f"没有产出高亮（{item['reason']}）")
+    unit_warns = _unit_warning_summary(units_by_page)
+    if unit_warns:
+        _log(f"[警告] 讲解单元的精度提示：{'、'.join(unit_warns)}")
 
     _write_json(os.path.join(out, "deck.json"), pptx_io.deck_to_dict(deck))
     _write_json(os.path.join(out, "units.json"), [
@@ -208,7 +211,8 @@ def _cmd_import(args) -> dict:
         "out": out, "mode": deck.mode, "width": deck.export_width_px,
         "pages": len(deck.pages), "bg": bg_count, "units": total_units,
         "skipped": len(skipped) + len(layout_skipped),
-        "warnings": _skip_summary(skipped) + _skip_summary(layout_skipped),
+        "warnings": (_skip_summary(skipped) + _skip_summary(layout_skipped)
+                     + unit_warns),
         "deck_json": os.path.join(out, "deck.json"),
     }
     if deck.mode == "redesign":
@@ -226,6 +230,16 @@ def _skip_summary(skipped: list) -> list:
     counts: dict[str, int] = {}
     for item in skipped:
         counts[item["reason"]] = counts.get(item["reason"], 0) + 1
+    return [f"{k}×{v}" for k, v in sorted(counts.items())]
+
+
+def _unit_warning_summary(units_by_page: list) -> list:
+    """把 Unit 级警告汇总成 `名字×条数`，与 `_skip_summary` 同格式便于并排读。"""
+    counts: dict[str, int] = {}
+    for units in units_by_page:
+        for u in units:
+            for name in u.warnings:
+                counts[name] = counts.get(name, 0) + 1
     return [f"{k}×{v}" for k, v in sorted(counts.items())]
 
 

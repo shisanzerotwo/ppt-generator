@@ -171,6 +171,32 @@ def test_import_surfaces_layout_dropped_shapes(tmp_path, capsys, monkeypatch):
     assert "TooNarrow" in err          # stderr 里也点出是哪个形状
 
 
+def test_import_surfaces_unit_precision_warnings(tmp_path, capsys, monkeypatch):
+    """F2：Unit 级的精度降级（wrap=none 且超宽）也要出现在 JSON 的 warnings 里。"""
+    src = tmp_path / "nowrap.pptx"
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(2), Inches(1))
+    box.name = "NarrowNowrap"
+    box.text_frame.word_wrap = False
+    box.text_frame.text = "这一行文字明显比这个两英寸宽的文本框要长很多很多"
+    box.text_frame.paragraphs[0].runs[0].font.size = Pt(28)
+    prs.save(str(src))
+
+    import outline
+    monkeypatch.setattr(outline, "generate_outline_from_text",
+                        lambda text, density="balanced": [])
+    monkeypatch.setattr(cli, "_design_pipeline",
+                        lambda out, topic, slides, image_map=None: "")
+
+    code, payload, err = _run(["import", str(src), "--out", str(tmp_path / "o"),
+                               "--no-com", "--mode", "redesign"], capsys)
+    assert code == 0, payload
+    assert "nowrap_overflow_degraded×1" in payload["data"]["warnings"]
+    assert "精度提示" in err
+
+
 def test_import_truncates_bg_dir_with_pages(tmp_path, capsys, monkeypatch):
     """契约 §8.2：--pages N 时 bg/ 与 deck.json 同步截断（多余底图清掉）。"""
     src = _src_pptx(tmp_path, pages=3)

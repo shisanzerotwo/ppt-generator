@@ -623,3 +623,31 @@ def test_hard_break_trailing_produces_empty_line():
     lines = hl_layout.wrap_lines("甲\n", 18.0, 300.0)
     assert [ln.text for ln in lines] == ["甲", ""]
     assert lines[1].width_pt == 0.0
+
+
+# ---------------------------------------------------------------- F2 wrap=none 降级
+
+def test_nowrap_overflow_is_flagged():
+    """`wrap="none"` 且文本超出框宽 → 高亮精度退化为段级，必须如实声明。"""
+    sh = _shape(word_wrap=False, width_emu=12700 * 200,
+                paragraphs=[_para("这一行文字明显比这个文本框要长很多很多很多")])
+    u = hl_layout.build_units(_page([sh]))[0]
+    assert len(u.lines) == 1, "wrap=none 就该出一行（不猜 PowerPoint 怎么折）"
+    assert "nowrap_overflow_degraded" in u.warnings
+
+
+def test_nowrap_that_fits_is_not_flagged():
+    """文本放得下的 wrap=none 不该报降级 —— 单行**就是**它的正确几何，别喊狼来了。"""
+    sh = _shape(word_wrap=False, width_emu=12700 * 400, paragraphs=[_para("短")])
+    u = hl_layout.build_units(_page([sh]))[0]
+    assert "nowrap_overflow_degraded" not in u.warnings
+
+
+def test_wrapping_shape_overflow_is_not_flagged():
+    """word_wrap=True 的形状会正常折行，不适用这条降级标记。"""
+    sh = _shape(word_wrap=True, width_emu=12700 * 200,
+                paragraphs=[_para("这一行文字明显比这个文本框要长很多很多很多")])
+    u = hl_layout.build_units(_page([sh]))[0]
+    assert len(u.lines) > 1
+    assert "nowrap_overflow_degraded" not in u.warnings
+    assert "vertical_anchor_inherited" in u.warnings      # 别的警告不受影响

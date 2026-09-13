@@ -324,6 +324,12 @@ class _UnitBuilder:
 
             align = para.align or "LEFT"
             warn = list(base_warn)
+            if shape.word_wrap is False and any(ln.width_pt > inner_w_pt for ln in lines):
+                # F2：`wrap="none"`（python-pptx `add_textbox` 的默认值）且估算宽度超过
+                # 框宽 —— PowerPoint 在这种框里不折行，于是我们一个段落恒出 1 行，
+                # "行级高亮"在这里**退化成段级**。它要么真的溢出、要么作者的折行本意
+                # 被关掉了，我们**不猜**它怎么折（契约的选择），但要如实声明精度降级。
+                warn.append("nowrap_overflow_degraded")
             if align in ("JUSTIFY", "DISTRIBUTE"):
                 align = "LEFT"
                 warn.append("justify_approximated")
