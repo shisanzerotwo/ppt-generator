@@ -231,7 +231,9 @@ monkeypatch.setitem(sys.modules, "win32com.client", fake_client)
 
 ### 7.1 探针范式（真机行为验证）
 
-放 `tools/probes/`，参考 `tools/probes/s1_probe_v2.py`：
+放 `tools/probes/`，参考 `tools/probes/s1_probe_v2.py`。前端专用：`tools/probes/webui_shot.py`
+（起真实端口 + Playwright 拍工作台三态截图 + pageerror 监听 + 「新建演示回首屏」交互断言，
+用法 `python tools/probes/webui_shot.py <输出目录> <前缀>`；前端改动的回归验证先用它再跑 pytest）。
 
 1. **独立观察者**：要验证「某个调用是否破坏了调用方的状态」，观察者必须在**另一个进程/线程且状态有效**处 —— 同进程自证会出现假阳性（S1 的 v1 探针就是这么翻车的）
 2. **阳性/阴性对照**：同一探针在「修复前 / 修复后」各跑一次（`git stash` 前后），两次输出都留档
@@ -300,6 +302,7 @@ monkeypatch.setitem(sys.modules, "win32com.client", fake_client)
 |---|---|
 | [`README.md`](../README.md) | 项目简介 + 快速开始 |
 | [`docs/USER_GUIDE.md`](USER_GUIDE.md) | **使用说明**（工作台操作 / CLI 参考 / 故障排查） |
+| [`docs/DESIGN_WEBUI.md`](DESIGN_WEBUI.md) | **WebUI 视觉规格**（现行「暖陶工坊」P4；含被否方案历史备注） |
 | [`KNOWLEDGE.md`](../KNOWLEDGE.md) | agent 执行手册（符号锚点 / 状态机 / 路由 / 已知风险表） |
 | [`docs/PPTX_INTERFACE.md`](PPTX_INTERFACE.md) | pptx 链路接口契约 v2（含被实测推翻的 16 条前提） |
 | [`docs/FIX_REPORT.md`](FIX_REPORT.md) | 9 项遗留风险的修复记录（四段式：根因/修法/前后对照/用例） |
