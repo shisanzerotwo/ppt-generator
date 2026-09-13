@@ -67,28 +67,34 @@
 
 | 现状 | 风险 | 证据出处 | 说明与影响 |
 |---|---|---|---|
-| **未修** | F1 `export_pages` 会拆掉调用线程的 COM apartment | TEST_REPORT §6 F1；AUDIT_REPORT §2（复核代码根因） | 调用后调用方**事先持有的 COM 代理失效**，本线程后续 COM 调用报 `CO_E_NOTINITIALIZED`（连 `Scripting.FileSystemObject` 都建不出来）；重新 `CoInitialize()` 可恢复。**偶发**（频次实测 1/3）。CLI 自愈（它自己 init/uninit），**Flask worker 里"先 COM 后 export_pages"会踩**。本轮规避：`pptgen import` 在导出后不再碰 COM |
-| **未修** | F2 真实素材上行级高亮退化为**段级** | TEST_REPORT §6 F2 | `b_multislide.pptx` 里 27 单元 → 27 行（多行单元 0 个），因为 python-pptx 的 `add_textbox` 默认写 `wrap="none"`（该稿 13/22 个文本框如此）。M2 的 coverage 结论**只覆盖单行段落**，不能外推到会折行的真实稿；断行层只被单元测试覆盖，没被验收素材碰过 |
-| **未修** | F3 冷调用端到端 **2.6s/页**（"≤1.5s/页"只在稳态成立） | TEST_REPORT §6 F3 | 单页稳态 0.125s、附着调用 0.23s/页，但**冷调用 2.64s/页**（10 页 26.4s）且不摊销（每次调用自己起 PowerPoint、自己 Quit）。成本：DispatchEx 启动 5.77s + `CoUninitialize` 2.67s + `Quit` 延迟退出。用户体感是"每次 import 约 26 秒" |
-| **未修** | M1 `a:br`（段内软换行）几何与溢出 QA **分叉** | AUDIT_REPORT §2 M1 | `qa._tokenize` 把 `"\n"` 当 1.0em 的 CJK 字形（不是硬换行），契约 §4.3 让整段交给 `wrap_lines` → 软换行被吃掉。实现加了 `if "\n" in text: 先硬拆` 修正渲染，但 `_paragraph_lines` 与 qa **差 +1 行**。契约 §4.2 那条"防漂移"等价断言只盖 `wrap_lines`，**盖不住真正产出几何的那个函数**。仓库内三份稿实测 `a:br=0`，故当前不发作；手工稿会踩 |
-| **未修** | M2 **zip bomb 无闸门** | AUDIT_REPORT §2 M2 | 109 KB 的包实测让 **64 MiB 进内存**（压缩比 601:1，`Presentation()` 照单全收）。契约 §8.3 点名要审，但没规定闸门。本轮**只在上传路由加了 60 MB 上传体积兜底**（`app.MAX_PPTX_BYTES`）——那是"上传大小"，挡不住高压缩比小包；真正的闸门（`infolist()` 累计 `file_size` + 压缩比上限）应落在 `read_pages` 前置 |
-| **未修** | M3 `inner_w_pt <= 0` 的形状被**静默丢弃** | AUDIT_REPORT §2 M3 | 契约 §4.3 要求"记 warning"，实现只做到"不产出 Unit"，`build_units` 也没有 `skipped` 出口 → "这里为什么没有高亮"无从排查。修法与 `read_pages.skipped` 同构（加可选收集器），成本极低 |
-| **未修** | M4 缺 `p:sldSz` → 裸 `TypeError`，错误码从 3 退化成 5 | AUDIT_REPORT §2 M4 | `prs.slide_width` 可为 `None`，而 `int(...)` 那行在 `read_pages` 的 `try` **之外** → 用户稿畸形却被告知"这是我们的 bug"（`INTERNAL`），把排查引向错误方向 |
-| **未修**（调用侧已规避） | L4 播放器不校验底图存在 → 黑屏静默通过 | AUDIT_REPORT §2 L4 | 缺图时 `<img>` 触发 `onerror`，`hl.ready` **照样 resolve** → 截出黑帧喂给 ffmpeg。本轮规避：`shot_player`（`video --mode step` 走它）与 `cli animate` 都先校验底图存在/`naturalWidth>0`；**播放器本身仍未校验**，自己写脚本要记得 |
-| **未修**（实测印证） | F3 补充：**工作台路径实测 27s / 10 页** | 2026-09-13 复查实测 | 起 Flask 后 `POST /api/pptx/import` 上传 `b_multislide.pptx`：12:44:34 → 12:45:01 共 **27 秒**（与 F3 的冷调用 2.64s/页同级）；而 CLI 单跑 `import` 8.22s 是同进程复用下的表现。→ **不是 Flask 特有 bug**，而是"每次 import 都新建并 Quit PowerPoint"的代价；优化方向是复用实例，但需与 S1（Close 关掉用户稿）/ D1（实例共享）的风险权衡 |
+| **已修复** `0fe912e` | F1 `export_pages` 会拆掉调用线程的 COM apartment | TEST_REPORT §6 F1；AUDIT_REPORT §2（复核代码根因） | 调用后调用方**事先持有的 COM 代理失效**，本线程后续 COM 调用报 `CO_E_NOTINITIALIZED`（连 `Scripting.FileSystemObject` 都建不出来）；重新 `CoInitialize()` 可恢复。**偶发**（频次实测 1/3）。CLI 自愈（它自己 init/uninit），**Flask worker 里"先 COM 后 export_pages"会踩**。本轮规避：`pptgen import` 在导出后不再碰 COM |
+| **已修复** `01cb207` | F2 真实素材上行级高亮退化为**段级** | TEST_REPORT §6 F2 | `b_multislide.pptx` 里 27 单元 → 27 行（多行单元 0 个），因为 python-pptx 的 `add_textbox` 默认写 `wrap="none"`（该稿 13/22 个文本框如此）。M2 的 coverage 结论**只覆盖单行段落**，不能外推到会折行的真实稿；断行层只被单元测试覆盖，没被验收素材碰过 |
+| ⛔ **放弃** `238eff4` | F3 冷调用端到端 **2.6s/页**（"≤1.5s/页"只在稳态成立） | TEST_REPORT §6 F3 | 单页稳态 0.125s、附着调用 0.23s/页，但**冷调用 2.64s/页**（10 页 26.4s）且不摊销（每次调用自己起 PowerPoint、自己 Quit）。成本：DispatchEx 启动 5.77s + `CoUninitialize` 2.67s + `Quit` 延迟退出。用户体感是"每次 import 约 26 秒" |
+| **已修复** `9b4e3c0` | M1 `a:br`（段内软换行）几何与溢出 QA **分叉** | AUDIT_REPORT §2 M1 | `qa._tokenize` 把 `"\n"` 当 1.0em 的 CJK 字形（不是硬换行），契约 §4.3 让整段交给 `wrap_lines` → 软换行被吃掉。实现加了 `if "\n" in text: 先硬拆` 修正渲染，但 `_paragraph_lines` 与 qa **差 +1 行**。契约 §4.2 那条"防漂移"等价断言只盖 `wrap_lines`，**盖不住真正产出几何的那个函数**。仓库内三份稿实测 `a:br=0`，故当前不发作；手工稿会踩 |
+| **已修复** `544e7b1` | M2 **zip bomb 无闸门** | AUDIT_REPORT §2 M2 | 109 KB 的包实测让 **64 MiB 进内存**（压缩比 601:1，`Presentation()` 照单全收）。契约 §8.3 点名要审，但没规定闸门。本轮**只在上传路由加了 60 MB 上传体积兜底**（`app.MAX_PPTX_BYTES`）——那是"上传大小"，挡不住高压缩比小包；真正的闸门（`infolist()` 累计 `file_size` + 压缩比上限）应落在 `read_pages` 前置 |
+| **已修复** `692d83d` | M3 `inner_w_pt <= 0` 的形状被**静默丢弃** | AUDIT_REPORT §2 M3 | 契约 §4.3 要求"记 warning"，实现只做到"不产出 Unit"，`build_units` 也没有 `skipped` 出口 → "这里为什么没有高亮"无从排查。修法与 `read_pages.skipped` 同构（加可选收集器），成本极低 |
+| **已修复** `2e72493` | M4 缺 `p:sldSz` → 裸 `TypeError`，错误码从 3 退化成 5 | AUDIT_REPORT §2 M4 | `prs.slide_width` 可为 `None`，而 `int(...)` 那行在 `read_pages` 的 `try` **之外** → 用户稿畸形却被告知"这是我们的 bug"（`INTERNAL`），把排查引向错误方向 |
+| **已修复** `8bd539c` | L4 播放器不校验底图存在 → 黑屏静默通过 | AUDIT_REPORT §2 L4 | 缺图时 `<img>` 触发 `onerror`，`hl.ready` **照样 resolve** → 截出黑帧喂给 ffmpeg。本轮规避：`shot_player`（`video --mode step` 走它）与 `cli animate` 都先校验底图存在/`naturalWidth>0`；**播放器本身仍未校验**，自己写脚本要记得 |
+| ✅ **实测印证**（作为 F3 放弃的依据） | F3 冷调用补充：**工作台路径实测 27s / 10 页** | 2026-09-13 复查实测 | 起 Flask 后 `POST /api/pptx/import` 上传 `b_multislide.pptx`：12:44:34 → 12:45:01 共 **27 秒**（与 F3 的冷调用 2.64s/页同级）；而 CLI 单跑 `import` 8.22s 是同进程复用下的表现。→ **不是 Flask 特有 bug**，而是"每次 import 都新建并 Quit PowerPoint"的代价；优化方向是复用实例，但需与 S1（Close 关掉用户稿）/ D1（实例共享）的风险权衡 |
 | **未修** | L5 `had_powerpoint` 采样窗口 TOCTOU | AUDIT_REPORT §2 L5 | 采样在 `DispatchEx` **之前**：用户恰好在这个窗口里启动 PowerPoint（还没开稿）→ 结束时 `had_powerpoint=False` 且 `Count==0` → Quit 掉用户刚启动的 PowerPoint。D1 的加固堵住了"事先开着"，没堵住"这期间打开" |
 | **未修** | L6 共享 PowerPoint 实例上**没有互斥** | AUDIT_REPORT §2 L6 | `export_pages` 全程无锁。两次并发导出（工作台 + CLI，或 >50 页后台路径）会在**同一个**实例上交错。守卫方向偏保守（少 Quit）故不破坏数据，但 `Export` 可能因模态状态失败，且失败文案把责任推给用户 |
 | **未修** | L7 `measure_coverage` 用 `0.0` 重载三种语义 | AUDIT_REPORT §2 L7 | 矩形退化 / 完全在图外 / 真的没墨迹，三者都返回 `0.0`。若高亮定位算错到图片外，度量给出的证据与"这块是空白"**完全一样** → 度量丧失了发现"定位算错"的能力。建议越界/退化返回 `None` |
 
-**同族但更轻、未修**（详见 AUDIT_REPORT §2 提示节与 L1/L2/L3）：
-`app.py::_export_pdf_via_com` 已在步 8 统一到守卫版本；L1 老 `.ppt` 被判成"已加密"
-（指引不可执行，且被 `test_encrypted_code` 锁成期望行为）、L2 表格列宽/行高数组短于
+> **2026-09-13 修复轮次结果**：9 项中 **8 项已修复**（F1/M1/F2/M3/M4/M2/L4/L1，测试 1028 → **1066**），
+> **F3 放弃**（实测：常驻复用提速 19.5×，但 CLI 收益为 0、且工作台 worker 是每请求新线程 →
+> 模块级单例直接 `RPC_E_WRONG_THREAD`，要落地需把 COM 收敛到常驻线程的重构，不划算）。
+> 完整四段式证据（根因/修法/前后对照实测/新增用例）见 `docs/FIX_REPORT.md`；
+> 本轮**未修** L2/L3/L5/L6/L7（低危，证据在 `docs/AUDIT_REPORT.md`）。
+
+**同族但更轻的项**（详见 AUDIT_REPORT §2）：`app.py::_export_pdf_via_com` 已在步 8 统一到守卫版本；
+**L1** 老 `.ppt` 曾被判成"已加密"、指引不可执行（还被 `test_encrypted_code` 锁成期望行为）→ **本轮已修**（`da574f8`）；
+**L2** 表格列宽/行高数组短于
 单元格时静默截断、L3 被改坏的 `deck.json` 裸崩而非 `IR_MISMATCH`、N3 测试数字口径
 （`docs/PPTX_INTERFACE.md` 的"248 基线"与本文旧写的"244 条"均已过时；**素材在
 `.gitignore` 内，新克隆上 M1/M2 的几条验收会静默 skip**，需先跑 `tools/probes/accept_m1.py`）。
 
 ## 验收
-- `.venv/Scripts/python.exe -m pytest tests/ -q` 全过（当前 **1028** 条；`tests/conftest.py` 有 autouse 夹具把 `runtime_config.json` 隔离到临时目录，用例不受本地渠道/开关影响）
+- `.venv/Scripts/python.exe -m pytest tests/ -q` 全过（当前 **1066** 条；`tests/conftest.py` 有 autouse 夹具把 `runtime_config.json` 隔离到临时目录，用例不受本地渠道/开关影响）
 - **pptx 链路的验收要先有素材**：`output/b_multislide.pptx` 与 COM 底图在 `.gitignore` 内，
   新克隆上 `needs_pptx_src` / `needs_material` 标记的用例会 skip —— 跑
   `tools/probes/accept_m1.py` 生成底图即可恢复（`accept_m2/m3/m3_shot/m6` 依此类推）
