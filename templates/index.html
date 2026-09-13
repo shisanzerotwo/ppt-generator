@@ -126,16 +126,51 @@ a.side-item:hover { color:var(--fg); }
 .tpl-current b { color:var(--accent); }
 .side-foot { border-top:1px solid var(--border); padding:10px 12px; margin-top:auto; }
 .workspace { flex:1; min-width:0; display:flex; flex-direction:column; }
-/* ===== 顶栏（瘦身：仅输入 + 生成 + 模型快捷栏）===== */
-.topbar { display:flex; align-items:center; gap:10px; padding:11px 28px;
-          background:rgba(255,253,248,.92); backdrop-filter:blur(8px);
-          border-bottom:1px solid var(--border);
-          position:sticky; top:0; z-index:20; flex-wrap:wrap; }
-.model-quickbar { flex-basis:100%; display:flex; align-items:center; font-size:12px; color:var(--muted); padding-top:2px; }
-.qb-trigger { display:inline-flex; align-items:center; gap:7px; padding:5px 11px;
-  border:1px solid var(--border); border-radius:var(--r); background:var(--surface);
-  color:var(--fg); font-size:12.5px; cursor:pointer; transition:border-color var(--t), background var(--t); }
-.qb-trigger:hover { border-color:var(--accent); background:var(--accent-soft); }
+/* ===== 底部命令岛 + 状态时间线（L2 对话流式排版）===== */
+.dock { position:fixed; left:var(--sidebar-w); right:0; bottom:0; z-index:40;
+        display:flex; flex-direction:column; align-items:center;
+        padding:0 26px 16px; pointer-events:none; }
+.dock > * { pointer-events:auto; }
+.tl-wrap { width:min(860px, 100%); margin-bottom:9px; }
+.tl-row { display:flex; align-items:center; gap:12px; background:var(--surface);
+          border:1px solid var(--border); border-radius:999px; padding:6px 16px;
+          box-shadow:0 6px 20px rgba(62,47,36,.08); }
+.stages { display:flex; align-items:center; }
+.stage { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--faint); }
+.stage .n { font-style:normal; width:19px; height:19px; border-radius:50%; border:1.5px solid currentColor;
+            background:var(--surface); display:inline-flex; align-items:center; justify-content:center;
+            font-size:9.5px; font-family:var(--mono); flex-shrink:0; }
+.stage:not(:last-child)::after { content:""; width:34px; height:1.5px; background:var(--border-strong); margin:0 10px; }
+.stage.active { color:var(--accent); font-weight:600; }
+.stage.active .n { border-color:var(--accent); border-style:dashed; color:var(--accent);
+                   box-shadow:0 0 0 4px var(--accent-soft); animation:spin 2.4s linear infinite; }
+.stage.done { color:var(--ok); }
+.stage.done .n { background:var(--ok); border-color:var(--ok); color:var(--surface); }
+.stage.done:not(:last-child)::after { background:var(--ok); opacity:.45; }
+.logline { margin-left:auto; font-family:var(--mono); font-size:10.5px; color:var(--muted);
+           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:300px; }
+.log-pop { position:relative; }
+.log-pop summary { list-style:none; cursor:pointer; font-size:11.5px; color:var(--faint); padding:3px 9px;
+                   border:1px solid var(--border); border-radius:999px; user-select:none; }
+.log-pop summary::-webkit-details-marker { display:none; }
+.log-pop[open] summary { color:var(--accent); border-color:var(--accent); }
+.log-pop[open] > div { position:absolute; right:0; bottom:calc(100% + 8px); width:min(520px, 80vw);
+                       max-height:240px; overflow-y:auto; background:var(--surface);
+                       border:1px solid var(--border-strong); border-radius:12px;
+                       box-shadow:var(--shadow-pop); padding:10px 14px; font-family:var(--mono);
+                       font-size:11px; line-height:1.8; color:var(--muted); }
+.log-pop #log { max-height:none; margin:0; }
+.cmd-island { width:min(760px, 100%); background:var(--surface); border:1px solid var(--border-strong);
+              border-radius:18px; box-shadow:0 14px 40px rgba(62,47,36,.18); overflow:hidden; }
+.cmd-island .track { height:3px; background:var(--raised); }
+.cmd-island .track > i { display:block; height:100%; width:0; background:var(--accent);
+                         transition:width .45s cubic-bezier(.4,0,.2,1); }
+.cmd-row { display:flex; gap:9px; padding:11px 13px; align-items:center; }
+.cmd-row .pill-badge { display:none; }
+.qb-trigger { display:inline-flex; align-items:center; gap:7px; padding:8px 11px;
+  border:1px solid var(--border); border-radius:var(--r); background:var(--raised);
+  color:var(--muted); font-size:12px; cursor:pointer; transition:border-color var(--t), background var(--t); white-space:nowrap; }
+.qb-trigger:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
 .qb-trigger .chev { color:var(--faint); }
 /* 模型对话框：复用 .modal 骨架，内部竖排三区（680px 舒展布局） */
 .mm-frame { width:min(680px, 94vw); }
@@ -207,7 +242,7 @@ a.side-item:hover { color:var(--fg); }
 .menu-body button:hover:not(:disabled) { background:var(--accent-soft); }
 .menu-body button:disabled { opacity:.4; cursor:not-allowed; }
 /* ===== 主区容器 ===== */
-.main { flex:1; padding:28px; max-width:1180px; width:100%; margin:0 auto; }
+.main { flex:1; padding:28px 28px 172px; max-width:1180px; width:100%; margin:0 auto; }
 .panel { background:var(--surface); border:1px solid var(--border); border-radius:var(--r-lg); }
 .stepwise-toggle { display:flex; align-items:center; gap:5px; font-size:13px; color:var(--muted);
                    white-space:nowrap; cursor:pointer; user-select:none; }
@@ -220,7 +255,7 @@ a.side-item:hover { color:var(--fg); }
 .rb-txt { font-weight:600; }
 /* ===== 首屏引导（未生成时）：衬线 + 陶土 eyebrow ===== */
 .hero { display:flex; flex-direction:column; align-items:center; justify-content:center;
-        text-align:center; padding:72px 24px; gap:13px; }
+        text-align:center; padding:64px 24px 40px; gap:13px; }
 .hero .eyebrow { font-family:var(--serif); font-style:italic; font-size:13px; letter-spacing:.08em;
                  color:var(--accent); }
 .hero h2 { margin:4px 0 0; font-family:var(--serif); font-size:clamp(28px, 3.4vw, 38px);
@@ -231,55 +266,30 @@ a.side-item:hover { color:var(--fg); }
         background:var(--surface); color:var(--muted); cursor:pointer; font-size:13px;
         transition:border-color var(--t), color var(--t), background var(--t); }
 .chip:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
-/* ===== 进度区（真实进度条 + 阶段）===== */
-#progress { margin-bottom:20px; padding:16px 20px; }
-.track { height:6px; background:var(--raised); border-radius:999px; overflow:hidden; margin-bottom:14px; }
-.track > i { display:block; height:100%; width:0; border-radius:999px;
-             background:var(--accent);
-             transition:width .45s cubic-bezier(.4,0,.2,1); }
-.stages { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.stage { display:flex; align-items:center; gap:6px; padding:4px 13px; border-radius:999px;
-         font-size:12.5px; color:var(--faint); background:var(--raised); border:1px solid transparent; }
-.stage .n { width:16px; height:16px; border-radius:50%; border:1.5px solid currentColor;
-            display:flex; align-items:center; justify-content:center; font-size:10px;
-            font-family:var(--mono); flex-shrink:0; }
-.stage.active { color:var(--accent); background:var(--accent-soft);
-                border-color:color-mix(in srgb, var(--accent) 40%, transparent); font-weight:600; }
-.stage.active .n { border-style:dashed; animation:spin 2.4s linear infinite; }
-.stage.done { color:var(--ok); background:transparent; }
-.stage.done .n { border-color:var(--ok); background:var(--ok); color:var(--surface); }
 @keyframes spin { to { transform:rotate(360deg); } }
-/* ===== 日志（等宽 + 可折叠）===== */
-.log-wrap { margin-top:12px; border-top:1px solid var(--border); padding-top:10px; }
-.log-wrap[open] summary .chev { transform:rotate(180deg); }
-.log-wrap summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px;
-                    font-size:12px; color:var(--muted); }
-.log-wrap summary::-webkit-details-marker { display:none; }
-#log { margin-top:8px; max-height:150px; overflow-y:auto; font-family:var(--mono);
-       font-size:11.5px; line-height:1.75; color:var(--muted); }
-#log b { color:var(--faint); font-weight:400; margin-right:7px; }
 /* ===== AI 设计稿预览 ===== */
 #deck-preview { margin-bottom:20px; }
-/* 左右分栏工作区：左编辑、右放映（结果出来后启用） */
+/* L2 排版：单栏卡片流（居中窄列）+ 右侧窄预览列 */
 .workarea { margin-top:4px; }
-.workarea.split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-                  gap:22px; align-items:start; }
-.workarea.split .col-show { position:sticky; top:24px; }
+.workarea.split { display:grid; grid-template-columns:minmax(0,1fr) 272px;
+                  gap:22px; align-items:start; max-width:1100px; margin:0 auto; }
+.workarea:not(.split) { max-width:760px; margin:0 auto; }
+.workarea.split .col-show { position:sticky; top:20px; }
 .workarea.split .col-show #deck-preview { margin-bottom:0; }
-.workarea.split .deck-frame { height:calc(100vh - 96px); }
 @media (max-width:1100px) {
   .workarea.split { grid-template-columns:1fr; }
   .workarea.split .col-show { position:static; order:-1; }  /* 窄屏放映挪到上方 */
-  .workarea.split .deck-frame { height:60vh; }
+  .workarea.split .deck-frame { height:52vh; }
 }
 .sec-head { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .sec-head h3 { margin:0; font-size:13px; font-weight:600; letter-spacing:.02em;
                color:var(--muted); display:flex; align-items:center; gap:7px; }
 .sec-head h3 svg { color:var(--accent); }
 .sec-head .sp { flex:1; }
-.deck-frame { display:block; width:100%; height:74vh; border:1px solid var(--border);
-              border-radius:var(--r-lg); background:var(--raised);
-              box-shadow:var(--shadow-pop); }
+.deck-wrap { position:relative; overflow:hidden; border:1px solid var(--border);
+             border-radius:var(--r-lg); background:var(--raised); box-shadow:var(--shadow-pop); }
+.deck-frame { position:absolute; top:0; left:0; width:1280px; height:720px;
+              transform-origin:0 0; border:none; background:var(--raised); }
 /* ===== 对话修改条 ===== */
 .refine { display:flex; gap:10px; margin-bottom:20px; }
 /* ===== 页面编辑卡片（deck 主题变量由 JS 按导出主题覆盖，默认与工作台同系暖白）===== */
@@ -354,7 +364,8 @@ a.side-item:hover { color:var(--fg); }
 #toast.on { opacity:1; transform:translateX(-50%) translateY(0); }
 @media (max-width:960px) {
   .sidebar { display:none; }
-  .main { padding:18px; }
+  .main { padding:18px 18px 160px; }
+  .dock { left:0; }
 }
 /* ===== 弹层查看器（原生 dialog：ESC / 焦点管理 / 无障碍语义自带） ===== */
 .modal { border:none; background:transparent; padding:0; margin:auto;
@@ -501,60 +512,11 @@ a.side-item:hover { color:var(--fg); }
 </aside>
 
 <div class="workspace">
-  <header class="topbar">
-    <label class="field">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input id="topic" placeholder="输入演示主题，回车开始生成" onkeydown="if(event.key==='Enter')doGenerate()">
-    </label>
-    <span class="pill-badge" id="style-badge"></span>
-    <label class="stepwise-toggle" title="开启后在大纲、配图两个节点暂停，等你确认再继续">
-      <input type="checkbox" id="stepwise-chk" onchange="setStepwise(this.checked)">分步确认
-    </label>
-    <select id="density-sel" class="density-sel" title="内容详实程度：要点数与每条描述的字数">
-      <option value="sparse">精简</option>
-      <option value="balanced" selected>标准</option>
-      <option value="dense">详实</option>
-    </select>
-    <button class="btn btn-primary" id="btn-gen" onclick="doGenerate()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 3l14 9-14 9V3z"/></svg>
-      生成
-    </button>
-    <div class="model-quickbar" id="model-quickbar">
-      <button class="qb-trigger" id="qb-trigger" title="切换渠道与模型（对话/视觉/生图）" onclick="openModelModal()">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.8 2.8M16.2 16.2L19 19M19 5l-2.8 2.8M7.8 16.2L5 19"/></svg>
-        <span id="qb-current">模型</span>
-        <svg class="chev" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-      </button>
-    </div>
-  </header>
   <main class="main">
-    <section class="panel" id="progress" hidden>
-      <div class="track"><i id="bar"></i></div>
-      <div class="stages">
-        <span class="stage" id="st-outline"><i class="n">1</i>大纲</span>
-        <span class="stage" id="st-images"><i class="n">2</i>配图</span>
-        <span class="stage" id="st-design"><i class="n">3</i>AI 设计</span>
-        <span class="stage" id="st-ready"><i class="n">4</i>就绪</span>
-      </div>
-      <details class="log-wrap">
-        <summary>
-          <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-          运行日志
-        </summary>
-        <div id="log"></div>
-      </details>
-      <div class="review-banner" id="review-banner" hidden>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9l-8 13.9A2 2 0 004 21h16a2 2 0 001.7-3.2l-8-13.9a2 2 0 00-3.4 0z"/></svg>
-        <span class="rb-txt" id="review-text"></span>
-        <span style="flex:1"></span>
-        <button class="btn btn-ghost btn-sm" onclick="toggleAi(true)">先改改</button>
-        <button class="btn btn-primary btn-sm" onclick="doContinue()">继续</button>
-      </div>
-    </section>
-    <div id="hero" class="panel hero">
+    <div id="hero" class="hero">
       <em class="eyebrow">AI SLIDE STUDIO</em>
       <h2>让 AI 为你设计演示</h2>
-      <p>输入一个主题，AI 会规划大纲、生成配图、判断视觉风格，并自主设计出每页布局各异的幻灯片。</p>
+      <p>在下方输入一个主题，AI 会规划大纲、生成配图、判断视觉风格，并自主设计出每页布局各异的幻灯片。</p>
       <div class="chips">
         <button class="chip" onclick="useExample(this)">人工智能如何改变教育</button>
         <button class="chip" onclick="useExample(this)">新能源汽车的发展历程</button>
@@ -580,6 +542,53 @@ a.side-item:hover { color:var(--fg); }
   </main>
 </div>
 </div>
+<footer class="dock" id="dock">
+  <div class="tl-wrap" id="progress" hidden>
+    <div class="review-banner" id="review-banner" hidden>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9l-8 13.9A2 2 0 004 21h16a2 2 0 001.7-3.2l-8-13.9a2 2 0 00-3.4 0z"/></svg>
+      <span class="rb-txt" id="review-text"></span>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost btn-sm" onclick="toggleAi(true)">先改改</button>
+      <button class="btn btn-primary btn-sm" onclick="doContinue()">继续</button>
+    </div>
+    <div class="tl-row">
+      <div class="stages">
+        <span class="stage" id="st-outline"><i class="n">1</i>大纲</span>
+        <span class="stage" id="st-images"><i class="n">2</i>配图</span>
+        <span class="stage" id="st-design"><i class="n">3</i>AI 设计</span>
+        <span class="stage" id="st-ready"><i class="n">4</i>就绪</span>
+      </div>
+      <span class="logline" id="logline"></span>
+      <details class="log-pop">
+        <summary>日志</summary>
+        <div id="log"></div>
+      </details>
+    </div>
+  </div>
+  <div class="cmd-island">
+    <div class="track"><i id="bar"></i></div>
+    <div class="cmd-row">
+      <span class="pill-badge" id="style-badge"></span>
+      <input id="topic" placeholder="输入演示主题，回车开始生成" onkeydown="if(event.key==='Enter')doGenerate()">
+      <select id="density-sel" class="density-sel" title="内容详实程度：要点数与每条描述的字数">
+        <option value="sparse">精简</option>
+        <option value="balanced" selected>标准</option>
+        <option value="dense">详实</option>
+      </select>
+      <label class="stepwise-toggle" title="开启后在大纲、配图两个节点暂停，等你确认再继续">
+        <input type="checkbox" id="stepwise-chk" onchange="setStepwise(this.checked)">分步确认
+      </label>
+      <button class="qb-trigger" id="qb-trigger" title="切换渠道与模型（对话/视觉/生图）" onclick="openModelModal()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l2.8 2.8M16.2 16.2L19 19M19 5l-2.8 2.8M7.8 16.2L5 19"/></svg>
+        <span id="qb-current">模型</span>
+      </button>
+      <button class="btn btn-primary" id="btn-gen" onclick="doGenerate()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 3l14 9-14 9V3z"/></svg>
+        生成
+      </button>
+    </div>
+  </div>
+</footer>
 <dialog class="modal" id="model-modal" aria-labelledby="mm-title" onclick="if(event.target===this)this.close()">
   <div class="modal-frame mm-frame">
     <div class="modal-head">
@@ -1262,6 +1271,9 @@ function renderLog(log) {
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   el.innerHTML = log.map(l => `<div><b>${l.time}</b>${esc(l.msg)}</div>`).join('');
   if (atBottom) el.scrollTop = el.scrollHeight;
+  // 时间线右端的单行最新日志（L2 排版：进度贴着对话框）
+  const last = log[log.length - 1];
+  $('logline').textContent = last ? `${last.time} · ${last.msg}` : '';
 }
 
 async function loadDecks() {
@@ -1541,8 +1553,20 @@ function renderPreview(s) {
       <button class="btn btn-ghost btn-sm" onclick="openCurrentDeck()">查看 / 放映</button>
       <button class="btn btn-ghost btn-sm" onclick="doRedesign()">重新设计</button>
     </div>
-    <iframe class="deck-frame" src="${currentDeckUrl}?t=${Date.now()}" sandbox="allow-scripts"></iframe>`;
+    <div class="deck-wrap"><iframe class="deck-frame" src="${currentDeckUrl}?t=${Date.now()}" sandbox="allow-scripts"></iframe></div>`;
+  fitDeckFrame();
 }
+// 窄预览列（L2 排版）：iframe 内部视口固定 1280×720，按容器宽等比缩放——
+// 否则设计稿按窄视口重排（文字会竖排）。resize 时重算。
+function fitDeckFrame() {
+  const wrap = document.querySelector('.deck-wrap');
+  const fr = wrap && wrap.querySelector('iframe');
+  if (!wrap || !fr) return;
+  const s = Math.min(1, wrap.clientWidth / 1280);
+  fr.style.transform = `scale(${s})`;
+  wrap.style.height = (720 * s) + 'px';
+}
+window.addEventListener('resize', fitDeckFrame);
 function vizChart(chart) {
   const labels = chart?.labels || [];
   const values = (chart?.values || []).map(v => Number(v) || 0);
