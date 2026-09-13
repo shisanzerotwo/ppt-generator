@@ -629,3 +629,61 @@ def test_missing_sldsz_is_unreadable_not_internal(tmp_path):
         pptx_io.read_pages(path)
     assert ei.value.code == "PPTX_UNREADABLE"
     assert "sldSz" in ei.value.message and ei.value.hint
+
+
+# ---------------------------------------------------------------- F1 COM apartment
+
+class _FakeOle32:
+    def __init__(self, hr):
+        self.hr = hr
+
+    def CoInitializeEx(self, *a, **k):
+        return self.hr
+
+
+@pytest.mark.parametrize("hr,owns", [
+    (0x0, True),            # S_OK      —— 这一份是我们加的
+    (0x1, False),           # S_FALSE   —— 调用方已经初始化过，别动
+    (0x80010106, False),    # RPC_E_CHANGED_MODE —— 别的 apartment 模型，更别动
+])
+def test_co_initialize_reports_ownership(monkeypatch, hr, owns):
+    """F1 的分支判据：只有 S_OK 才代表"该由我们收尾"。"""
+    import ctypes
+    monkeypatch.setattr(ctypes, "WinDLL", lambda name: _FakeOle32(hr))
+    assert pptx_io._co_initialize() is owns
+
+
+def _run_export_hitting_finally(tmp_path, monkeypatch, owns):
+    """让 export_pages 走到 finally（DispatchEx 打桩失败），记录 CoUninitialize 次数。
+
+    `owns` 直接把 `_co_initialize` 的归属判定钉死 —— 真机环境里 `import
+    win32com.client` **已经**初始化过 apartment，所以真实返回值恒为 False，
+    不钉的话覆盖不到 S_OK 那条路径。
+    """
+    import pythoncom
+    import win32com.client
+
+    src = _blank_deck(tmp_path / "d.pptx", pages=1)
+    monkeypatch.setattr(pptx_io, "powerpoint_available", lambda: True)
+    monkeypatch.setattr(pptx_io, "_powerpoint_running", lambda: False)
+    monkeypatch.setattr(pptx_io, "_co_initialize", lambda: owns)
+
+    def boom(*a, **k):
+        raise RuntimeError("打桩：不起 PowerPoint")
+
+    monkeypatch.setattr(win32com.client, "DispatchEx", boom)
+    calls = []
+    monkeypatch.setattr(pythoncom, "CoUninitialize", lambda: calls.append(1))
+    with pytest.raises(pptx_io.PptxError):
+        pptx_io.export_pages(src, str(tmp_path / "bg"), width=640)
+    return calls
+
+
+def test_export_pages_uninitializes_only_when_it_owns_it(tmp_path, monkeypatch):
+    """F1：归我们的那一份要自己收尾（S_OK 分支）。"""
+    assert _run_export_hitting_finally(tmp_path, monkeypatch, owns=True) == [1]
+
+
+def test_export_pages_leaves_callers_apartment_alone(tmp_path, monkeypatch):
+    """F1：不归我们管的计数**一次都不能减**（S_FALSE 分支，别拆调用方 apartment）。"""
+    assert _run_export_hitting_finally(tmp_path, monkeypatch, owns=False) == []

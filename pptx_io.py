@@ -54,6 +54,7 @@ _ENCRYPTED_STREAM_MARK = "EncryptedPackage".encode("utf-16-le")
 MAX_EXTRACT_BYTES = 512 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 200.0
 RATIO_MIN_BYTES = 8 * 1024 * 1024
+_COINIT_APARTMENTTHREADED = 2      # ole32 的 COINIT_APARTMENTTHREADED
 
 _NO_POWERPOINT_HINT = (
     "请安装 Microsoft Office（含 PowerPoint），或改用 --mode redesign / 直接跳过 faithful 模式。"
@@ -683,6 +684,31 @@ def _powerpoint_running() -> bool:
     return "POWERPNT.EXE" in out.upper()
 
 
+def _co_initialize() -> bool:
+    """初始化本线程的 COM apartment，返回**这次是不是我们初始化的**。
+
+    为什么不能无条件 `CoInitialize()` + `CoUninitialize()`（审计 F1）：调用方线程
+    可能**本来就**初始化过 COM（Flask worker、>50 页的后台路径）。我们那一句
+    `CoUninitialize` 会把**调用方的**计数一起减掉，它之后任何 COM 调用都可能报
+    `CO_E_NOTINITIALIZED`（连 `Scripting.FileSystemObject` 都建不出来）。
+    规则很简单：**不是自己加的计数，就不要减**。
+
+    为什么用 ctypes：pywin32 的 `pythoncom.CoInitializeEx` 恒返回 `None`，读不到
+    HRESULT。直接问 ole32 要：
+      S_OK(0)                        我们自己初始化的 → 结束时由我们收尾
+      S_FALSE(1)                     调用方已初始化   → **不动它**
+      RPC_E_CHANGED_MODE(80010106)   该线程是别的 apartment 模型 → 更不该动
+    """
+    try:
+        import ctypes
+        hr = ctypes.WinDLL("ole32").CoInitializeEx(None, _COINIT_APARTMENTTHREADED)
+    except Exception:  # noqa: BLE001  ctypes 不可用就退回老行为（至少不崩）
+        import pythoncom
+        pythoncom.CoInitialize()
+        return True
+    return hr == 0      # 只有 S_OK 才代表"这一份是我们加的"
+
+
 def export_pages(pptx_path: str, out_dir: str, width: int = 1920) -> list[str]:
     """COM 无窗口导出每页 PNG，返回**绝对路径**列表（页序一致），slide_1.png 起。
 
@@ -707,7 +733,9 @@ def export_pages(pptx_path: str, out_dir: str, width: int = 1920) -> list[str]:
     os.makedirs(out_dir, exist_ok=True)
     had_powerpoint = _powerpoint_running()
 
-    pythoncom.CoInitialize()
+    # F1：只认自己加的计数。调用方已初始化 COM 时（Flask worker、后台线程等）
+    # 我们**不初始化也不收尾**，绝不替它拆 apartment。
+    we_initialized = _co_initialize()
     app = None
     pres = None
     # S1 守卫（真机实测修复）：只有**我们自己新增**的那份稿才允许 Close。
@@ -779,5 +807,7 @@ def export_pages(pptx_path: str, out_dir: str, width: int = 1920) -> list[str]:
         # Quit）都会出现，且从不外泄成 Python 异常——只有 pytest 的 faulthandler
         # 会把它打成 "Windows fatal exception" 到 stderr。属噪音，不用管。
         app = pres = None
-        pythoncom.CoUninitialize()
+        # F1：只有这一份是我们加的才收尾；调用方自己开的计数原样留着。
+        if we_initialized:
+            pythoncom.CoUninitialize()
     return done
