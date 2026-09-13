@@ -78,6 +78,15 @@ def wrap_lines(text: str, size_pt: float, box_width_pt: float) -> list[Line]:
             pending_text.append(tok)
             continue
 
+        if qa._is_hard_break(tok):
+            # 硬换行（`a:br` → "\n"）：与 qa 用**同一个判据**，两边行数才不会打架。
+            # 收掉当前行（行尾挂起的空格随之丢弃），另起一行。
+            lines_out.append(Line("".join(cur_text), cur_w, size_pt))
+            cur_text, cur_w = [], 0.0
+            pending_space = 0.0
+            pending_text = []
+            continue
+
         if kind == "word":
             width = sum(qa._char_width_pt(c, size_pt) for c in tok)
         else:  # cjk / 单字符
@@ -169,16 +178,16 @@ def _para_size_pt(para) -> float:
 
 def _paragraph_lines(text: str, size_pt: float, inner_w_pt: float,
                      word_wrap: bool | None) -> list[Line]:
-    """一段 → 若干行。word_wrap is False 时不换行，只按手动换行拆。"""
+    """一段 → 若干行。word_wrap is False 时不换行，只按硬换行拆。
+
+    修 M1 之后这里**就是契约 §4.3 的字面写法**：硬换行（`a:br` → `"\\n"`）由
+    `wrap_lines` 自己处理（判据 `qa._is_hard_break` 两边共用），所以"产出几何的函数"
+    与"算溢出的函数"同源 —— 契约 §4.2 的防漂移断言终于盖到了真正被调用的这一层
+    （此前它只盖 `wrap_lines`，而 `_paragraph_lines` 私自多了一次 `\n` 硬拆）。
+    """
     if word_wrap is False:
         return [Line(part, sum(qa._char_width_pt(c, size_pt) for c in part), size_pt)
                 for part in text.split("\n")]
-    if "\n" in text:
-        # 段内手动换行（a:br）：先按硬换行断开，每段再各自贪心换行
-        out: list[Line] = []
-        for part in text.split("\n"):
-            out.extend(wrap_lines(part, size_pt, inner_w_pt))
-        return out
     return wrap_lines(text, size_pt, inner_w_pt)
 
 

@@ -259,9 +259,14 @@ def test_wrap_lines_matches_qa_at(text, size, width):
 @pytest.mark.parametrize("text", CORPUS)
 @pytest.mark.parametrize("width", [45.0, 150.0, 600.0])
 def test_wrap_lines_loses_no_non_space_char(text, width):
-    """不变量：除空格外的字符一个都不能丢（抓"掉字"类真 bug）。"""
+    """不变量：除空格外的字符一个都不能丢（抓"掉字"类真 bug）。
+
+    修 M1 后 `"\\n"` 是**硬换行（结构）**而不是字形 —— 它不再出现在任何一行的
+    文本里，而是体现在"多一行"上（与 `qa` 同源）。所以这里和空格一样把它剥掉再比。
+    """
     lines = hl_layout.wrap_lines(text, 14.0, width)
-    assert "".join(ln.text for ln in lines).replace(" ", "") == text.replace(" ", "")
+    assert "".join(ln.text for ln in lines).replace(" ", "").replace("\n", "") == \
+        text.replace(" ", "").replace("\n", "")
 
 
 @pytest.mark.parametrize("text", CORPUS)
@@ -269,7 +274,10 @@ def test_wrap_lines_loses_no_non_space_char(text, width):
 def test_wrap_lines_no_leading_space_and_no_empty_line(text, width):
     lines = hl_layout.wrap_lines(text, 14.0, width)
     assert not any(ln.text.startswith(" ") for ln in lines)
-    if text.strip(" "):
+    if text.strip(" ") and "\n" not in text:
+        # 含硬换行的语料会**合法地**产生空行（`a:br` 之后另起一行，那一行可以是空的），
+        # 所以"无空行"只对不含 `\n` 的语料成立；硬换行语义由
+        # tests/test_hl_layout.py::test_hard_break_* 专门覆盖。
         assert all(ln.text for ln in lines)
 
 

@@ -573,3 +573,53 @@ def test_short_column_array_is_reported():
     skipped: list = []
     hl_layout.build_units(_page([sh]), skipped=skipped)
     assert "col_array_short" in [s["reason"] for s in skipped]
+
+
+# ---------------------------------------------------------------- M1 硬换行
+
+HARD_BREAK_CASES = [
+    ("两行", "第一行\n第二行", 2),
+    ("段尾换了行", "只有一行\n", 2),
+    ("连续两个硬换行", "甲\n\n乙", 3),
+    ("开头就是硬换行", "\n\nabc", 3),
+    ("硬换行 + 软折行", "前缀字" * 20 + "\n后缀", None),
+    ("行首带空格", "甲\n 乙", 2),
+]
+
+
+@pytest.mark.parametrize("label,text,expect", HARD_BREAK_CASES)
+def test_hard_break_makes_qa_and_geometry_agree(label, text, expect):
+    """修 M1：`a:br`（读成 "\\n"）是**硬换行**，三套度量必须给同一行数。
+
+    契约 §4.2 的防漂移断言原本只盖 `wrap_lines`，而**真正产出几何**的是
+    `_paragraph_lines` —— 这条用例把它也盖上了。
+    """
+    p_lines = hl_layout._paragraph_lines(text, 18.0, 300.0, True)
+    w_lines = hl_layout.wrap_lines(text, 18.0, 300.0)
+    q_lines = qa.measure_text_lines(text, 18.0, 300.0)
+    assert len(p_lines) == len(w_lines) == q_lines, f"{label}: 三套度量不一致"
+    if expect is not None:
+        assert q_lines == expect, f"{label}: 期望 {expect} 行，实得 {q_lines}"
+
+
+def test_qa_counts_hard_break_as_a_line():
+    """`qa` 自己也必须认硬换行：它算的是"PowerPoint 会排出几行"，软换行算一个字形就错了。"""
+    assert qa.measure_text_lines("甲\n乙", 18.0, 300.0) == 2
+    assert qa.measure_text_lines("甲", 18.0, 300.0) == 1
+    # 与"把两段分开算再相加"一致（这正是硬换行的语义）
+    assert qa.measure_text_lines("甲\n乙", 18.0, 300.0) == (
+        qa.measure_text_lines("甲", 18.0, 300.0)
+        + qa.measure_text_lines("乙", 18.0, 300.0))
+
+
+def test_hard_break_line_texts_are_split_not_glued():
+    """硬换行把文本拆到不同行，而不是塞进同一行的文本里。"""
+    lines = hl_layout.wrap_lines("甲\n乙", 18.0, 300.0)
+    assert [ln.text for ln in lines] == ["甲", "乙"]
+
+
+def test_hard_break_trailing_produces_empty_line():
+    """PowerPoint 里 `a:br` 之后另起一行：段尾的硬换行会留下一个空行。"""
+    lines = hl_layout.wrap_lines("甲\n", 18.0, 300.0)
+    assert [ln.text for ln in lines] == ["甲", ""]
+    assert lines[1].width_pt == 0.0

@@ -132,6 +132,17 @@ def _place_units(units, size_pt, box_width_pt, first_width):
     return lines, cur
 
 
+def _is_hard_break(tok: str) -> bool:
+    """`"\\n"` 是**硬换行**（PowerPoint 必在此断行），不是字形。
+
+    它来自 `pptx_io._para_text` 对 `a:br` 的翻译。注意 `_tokenize` 会把它归进
+    `cjk` 分支（"\\n" 既不是空格也不是 alnum → 落到 else），光看 kind 认不出来，
+    只能按字符判。修 M1 前这里被当成 1.0em 宽的 CJK 字形，于是"算出来的行数"
+    比 PowerPoint 实际排出的少 —— 而溢出 QA 与高亮几何都建立在行数上。
+    """
+    return tok == "\n"
+
+
 def _measure_lines_ex(text: str, size_pt: float, box_width_pt: float):
     """贪心换行模拟，返回 (行数, 是否降级估算)。"""
     tokens = _tokenize(text)
@@ -143,6 +154,14 @@ def _measure_lines_ex(text: str, size_pt: float, box_width_pt: float):
     for kind, tok in tokens:
         if kind == "space":
             pending_space += _char_width_pt(" ", size_pt)
+            continue
+
+        if _is_hard_break(tok):
+            # 硬换行：收掉当前行，另起一行。行尾的挂起空格随行丢弃；
+            # 这一行即使后面没有内容也算一行（与 PowerPoint 一致）。
+            lines += 1
+            cur = 0.0
+            pending_space = 0.0
             continue
 
         if kind == "word":
