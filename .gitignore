@@ -6,3 +6,12 @@ __pycache__/
 server.log
 
 server_test.log
+
+# ---- 2026-09-13 复查补：本地配置 / 生成物 / 误放文件 ----
+.claude-run.log
+.claude/settings.local.json
+.zcode/
+.pycache/
+run-smoke.png
+hosts_steampp_backup_*
+graphify-out/
