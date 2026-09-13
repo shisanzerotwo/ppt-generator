@@ -137,15 +137,17 @@ a.side-item:hover { color:var(--fg); }
   color:var(--fg); font-size:12.5px; cursor:pointer; transition:border-color var(--t), background var(--t); }
 .qb-trigger:hover { border-color:var(--accent); background:var(--accent-soft); }
 .qb-trigger .chev { color:var(--faint); }
-/* 模型对话框：复用 .modal 骨架，内部竖排三区 */
-.mm-frame { width:min(560px, 92vw); }
-.mm-body { display:flex; flex-direction:column; gap:14px; padding:16px; overflow:auto; max-height:74vh; }
-.mm-sec { display:flex; flex-direction:column; gap:8px; padding-bottom:12px; border-bottom:1px dashed var(--border-strong); }
+/* 模型对话框：复用 .modal 骨架，内部竖排三区（680px 舒展布局） */
+.mm-frame { width:min(680px, 94vw); }
+.mm-body { display:flex; flex-direction:column; gap:16px; padding:18px 20px; overflow:auto; max-height:min(80vh, 780px); }
+.mm-sec { display:flex; flex-direction:column; gap:9px; padding-bottom:14px; border-bottom:1px dashed var(--border-strong); }
 .mm-sec:last-child { border-bottom:none; padding-bottom:0; }
-.mm-sec-title { font-size:12.5px; font-weight:600; color:var(--fg); }
+.mm-sec-title { font-size:13px; font-weight:600; color:var(--fg); display:flex; align-items:center; }
+.mm-sec-title::before { content:""; width:3px; height:13px; border-radius:2px;
+                        background:var(--accent); margin-right:8px; }
 .mm-hint { font-weight:400; font-size:11.5px; color:var(--faint); margin-left:6px; }
-.mm-channels { display:flex; flex-direction:column; gap:5px; }
-.mm-ch { display:flex; align-items:center; gap:9px; padding:8px 11px; border:1px solid var(--border);
+.mm-channels { display:flex; flex-direction:column; gap:7px; }
+.mm-ch { display:flex; align-items:center; gap:10px; padding:10px 13px; border:1px solid var(--border);
   border-radius:var(--r); cursor:pointer; font-size:12.5px; color:var(--fg); background:var(--raised);
   transition:border-color var(--t), background var(--t); }
 .mm-ch:hover { border-color:var(--border-strong); }
@@ -158,9 +160,10 @@ a.side-item:hover { color:var(--fg); }
 .mm-add[open] summary { margin-bottom:6px; }
 .mm-add .model-grid { display:flex; flex-direction:column; gap:6px; }
 .mm-add-btn { align-self:flex-start; }
-.mm-assign { display:flex; flex-direction:column; gap:6px; }
-.mm-assign label { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
-.mm-assign select { flex:1; padding:5px 8px; border:1px solid var(--border); border-radius:6px;
+.mm-assign { display:flex; flex-direction:column; gap:8px; }
+.mm-assign label { display:grid; grid-template-columns:96px 1fr; align-items:center; gap:10px;
+  font-size:12px; color:var(--muted); }
+.mm-assign select { padding:6px 9px; border:1px solid var(--border); border-radius:6px;
   background:var(--surface); color:var(--fg); font-size:12px; min-width:0; text-overflow:ellipsis; cursor:pointer; }
 .mm-assign select:focus { outline:none; border-color:var(--accent); }
 .mm-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:2px; }
@@ -751,8 +754,16 @@ async function post(url, body) {
     opt.headers = {'Content-Type': 'application/json'};
     opt.body = JSON.stringify(body);
   }
-  const r = await fetch(url, opt);
-  return {ok: r.ok, data: await r.json()};
+  try {
+    const r = await fetch(url, opt);
+    let data;
+    try { data = await r.json(); }
+    catch (e) { data = {error: `服务响应异常（HTTP ${r.status}）`}; }
+    return {ok: r.ok, data};
+  } catch (e) {
+    // 服务不可达/重启中：绝不能静默——把完整指引交给调用方 toast（避免双 toast 互相覆盖）
+    return {ok: false, data: {error: '无法连接服务：请确认 python app.py 正在运行（注意端口 5000/5001）'}};
+  }
 }
 
 async function doGenerate() {
@@ -917,8 +928,13 @@ async function doExportTxt()  { exportAs('/api/export_txt', '大纲'); }
 async function doExportPdf()  { exportAs('/api/export_pdf', ' PDF'); }
 async function doExportHtml() { exportAs('/api/export_html', ' HTML'); }
 async function refresh() {
-  const r = await fetch('/api/status');
-  const s = await r.json();
+  let s;
+  try {
+    const r = await fetch('/api/status');
+    s = await r.json();
+  } catch (e) {
+    return;   // 服务暂不可达：静默跳过本轮，下一秒轮询即重试
+  }
   const working = !['idle', 'ready'].includes(s.phase);
   curPhase = s.phase;
   deckCount = s.slides.length;
@@ -1662,6 +1678,12 @@ bindSelectionCapture();
 // Ctrl/⌘+J 呼出或收起 AI 协作面板
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); toggleAi(); }
+});
+// 兜底：任何漏网的异步错误都给出可见提示（消灭「点了没反应」的静默失败）
+window.addEventListener('unhandledrejection', e => {
+  console.error('unhandled rejection:', e.reason);
+  const msg = e.reason && e.reason.message ? e.reason.message : '未知错误';
+  toast('操作出错：' + msg + '（详情见控制台 F12）', 6000);
 });
 </script>
 </body>
