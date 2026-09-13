@@ -390,7 +390,10 @@ def test_adversarial_player_in_real_browser(tmp_path):
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.on("dialog", lambda d: (dialogs.append(d.message), d.dismiss()))
             page.goto("file:///" + path.replace("\\", "/"), wait_until="load")
-            page.evaluate("window.hl.ready")
+            # `bg/missing.png` 是故意缺的路径。修 L4 之后，缺底图会让 ready **reject**
+            # （那正是它该做的事：不许黑帧静默通过）；本案验的是转义/注入，与此无关，
+            # 所以在 JS 侧接住 reject 再往下走。
+            page.evaluate("window.hl.ready.catch(() => 'bg-missing')")
             assert page.evaluate("document.title") == TITLE_PAYLOAD + " · 高亮讲解"
             assert page.evaluate("document.querySelector('h1').textContent") == \
                 TITLE_PAYLOAD + " · 高亮讲解"

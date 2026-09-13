@@ -68,6 +68,8 @@ h1{font-size:15px;font-weight:600;color:#8b98ab;letter-spacing:.05em}
 .dots{display:flex;gap:5px;flex-wrap:wrap}
 .dot{width:9px;height:9px;border-radius:50%;background:#2a3548;cursor:pointer}
 .dot.on{background:#3b82f6}
+.bgwarn{position:fixed;left:10px;bottom:10px;z-index:9;background:#7f1d1d;color:#fff;
+  padding:6px 12px;border-radius:6px;font-size:12px;max-width:70vw}
 </style></head><body>
 <h1>__TITLE__ · 高亮讲解</h1>
 <div class="frame" id="frame"><div class="stage" id="stage">
@@ -113,11 +115,18 @@ maskEl.setAttribute('height', H);
 dimrect.setAttribute('fill', 'rgba(0,0,0,' + CFG.dim + ')');
 
 /* 底图一次性建好并全部保留在 DOM 里：goto 靠切 display 同步生效，不再等图片加载 */
+const bgFailed = [];                      // L4：缺图必须能被程序与人都看见
 const imgs = BGS.map((src, i) => {
   const im = document.createElement('img');
   im.className = 'bg';
-  im.setAttribute('src', src);           // 走 JS 赋值，不经过 HTML 解析
   im.alt = '第 ' + (i + 1) + ' 页';
+  // 先挂回调再设 src（避免竞态）。onerror 不只是"不显示"——它要进 bgFailed，
+  // 否则缺图时页面全黑而 ready 照样 resolve，黑帧会安静地流进 MP4。
+  im._done = new Promise(res => {
+    im.onload = () => res();
+    im.onerror = () => { bgFailed.push(src); res(); };
+  });
+  im.setAttribute('src', src);           // 走 JS 赋值，不经过 HTML 解析
   stage.insertBefore(im, dimg);
   return im;
 });
@@ -208,9 +217,17 @@ window.hl = {
     return {page: page, step: step, totalPages: PAGES.length,
             totalUnits: (PAGES[page] || []).length};
   },
-  ready: Promise.resolve().then(() => Promise.all(imgs.map(im =>
-    im.complete ? null : new Promise(res => { im.onload = im.onerror = res; })
-  ))).then(() => { fit(); render(); return true; })
+  failed() { return bgFailed.slice(); },
+  ready: Promise.all(imgs.map(im => im._done)).then(() => {
+    fit(); render();
+    // 有底图没加载出来 → **reject**，让调用方无法"安静地"把黑帧截走（审计 L4）。
+    // 页面本身仍然渲染出来（人看得见），只是程序侧必须显式处理这个失败。
+    if (bgFailed.length) {
+      throw new Error('底图加载失败 ' + bgFailed.length + '/' + BGS.length
+                      + '：' + bgFailed[0]);
+    }
+    return true;
+  })
 };
 
 function revealAll() { hl.goto(page, 99999); }
@@ -247,7 +264,14 @@ function fit() {
 
 buildDots();
 fit();
-hl.ready.then(fit);
+// ready 在缺底图时会 reject（L4）——这里必须接住，否则控制台会多一条 unhandled
+// rejection；同时给**人**一个看得见的提示，而不是一片黑屏。
+hl.ready.then(fit).catch(() => {
+  const d = document.createElement('div');
+  d.className = 'bgwarn';
+  d.textContent = '底图加载失败 ' + bgFailed.length + ' 张：' + bgFailed.join('、');
+  document.body.appendChild(d);
+});
 window.addEventListener('load', fit);
 </script>
 </body></html>
@@ -403,7 +427,12 @@ def shot_player(player_html: str, out_dir: str, steps: list,
         try:
             page = browser.new_page(viewport={"width": 640, "height": 360})
             page.goto(url, wait_until="load")
-            page.evaluate("window.hl.ready")
+            try:
+                page.evaluate("window.hl.ready")
+            except Exception:  # noqa: BLE001
+                # L4 之后缺底图会让 ready **reject** —— 那正是它该做的事。
+                # 这里吞掉浏览器异常，改由下面的 check 统一给带错误码的中文 PptxError。
+                pass
 
             size = page.evaluate(
                 "() => ({w: CFG.canvasWidth, h: CFG.canvasHeight})")

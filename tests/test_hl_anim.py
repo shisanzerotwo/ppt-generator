@@ -307,3 +307,55 @@ def test_shot_player_missing_bg_raises_not_black_frame(tmp_path):
         hl_anim.shot_player(player, str(tmp_path / "f3"), [(0, 1)])
     assert ei.value.code == "IR_MISMATCH"
     assert "底图" in ei.value.message
+
+
+# ---------------------------------------------------------------- L4 播放器自校验
+
+def test_player_exposes_failure_api(tmp_path):
+    """静态：模板里必须挂着 onerror 与 failed() 出口（无浏览器也能查）。"""
+    _, doc = _build(tmp_path)
+    assert "bgFailed" in doc
+    assert "im.onerror" in doc
+    assert "failed()" in doc
+
+
+def test_player_ready_rejects_when_bg_missing(tmp_path):
+    """缺底图 → `hl.ready` 必须 **reject**，不能静默 resolve（否则黑帧流进 MP4）。"""
+    out = tmp_path / "pl"
+    _mkbg(str(out / "bg" / "slide_1.png"), (10, 10, 200))
+    player = hl_anim.build_player(str(out), ["bg/slide_1.png", "bg/gone.png"],
+                                  [[_unit()], [_unit()]],
+                                  canvas_width_px=320, canvas_height_px=180)
+    _assert_ready(player, expect_reject=True, expect_failed=["bg/gone.png"])
+
+
+def test_player_ready_resolves_when_all_bg_present(tmp_path):
+    """阳性对照：底图齐全时 ready 正常 resolve（不是"永远 reject"）。"""
+    player, _ = _canvas_player(tmp_path)
+    _assert_ready(player, expect_reject=False, expect_failed=[])
+
+
+def _assert_ready(player, expect_reject, expect_failed):
+    from pathlib import Path
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        pytest.skip("未安装 playwright")
+    import shot
+    with sync_playwright() as p:
+        try:
+            browser = shot._launch_browser(p)
+        except RuntimeError as e:
+            pytest.skip(f"无可用浏览器：{e}")
+        try:
+            page = browser.new_page(viewport={"width": 320, "height": 180})
+            page.goto(Path(os.path.abspath(player)).as_uri(), wait_until="load")
+            rejected = False
+            try:
+                page.evaluate("window.hl.ready")
+            except Exception:  # noqa: BLE001
+                rejected = True
+            assert rejected is expect_reject
+            assert page.evaluate("window.hl.failed()") == expect_failed
+        finally:
+            browser.close()
