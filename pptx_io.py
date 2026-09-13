@@ -677,8 +677,11 @@ def _powerpoint_running() -> bool:
         return False
     import subprocess
     try:
+        # 中文 Windows 的 tasklist 输出是 GBK；不显式指定时按环境默认解码，
+        # UTF-8 环境下 reader 线程直接 UnicodeDecodeError（communicate 返回 None）
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq POWERPNT.EXE", "/NH"],
-                             capture_output=True, text=True, timeout=15).stdout
+                             capture_output=True, text=True, timeout=15,
+                             encoding="gbk", errors="replace").stdout
     except (OSError, subprocess.SubprocessError):
         return True  # 探不到时保守：当作"有"，绝不 Quit
     return "POWERPNT.EXE" in out.upper()

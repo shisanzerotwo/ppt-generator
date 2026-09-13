@@ -79,7 +79,9 @@ def build_final_args(page_clips: list[str], out: str, seconds: float = 4.0,
 def _run(args: list[str], err: str, timeout: float = 300):
     """带超时执行：ffmpeg 挂死（磁盘满/杀毒拦截）时不至于永久占用 _video_jobs。"""
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        # stderr 会回显含中文的文件路径；显式 utf-8 + replace，不赌运行环境默认编码
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(f"{err}：执行超时（>{timeout:.0f}s），已终止") from e
     if p.returncode != 0:
