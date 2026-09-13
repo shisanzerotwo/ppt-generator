@@ -232,11 +232,12 @@ class _UnitBuilder:
     """把一页的形状树摊成讲解单元，保持文档序。"""
 
     def __init__(self, page: PageShapes, export_width_px: int,
-                 pad_x_pt: float, pad_y_pt: float):
+                 pad_x_pt: float, pad_y_pt: float, skipped: list | None = None):
         self.page = page
         self.export_width_px = export_width_px
         self.pad_x_pt = pad_x_pt
         self.pad_y_pt = pad_y_pt
+        self.skipped = skipped
         self.canvas_w_emu = page.width_emu
         self.median_pt = _page_median_size_pt(page)
         self.is_estimated = not qa.font_available()
@@ -272,13 +273,27 @@ class _UnitBuilder:
             w.append("autofit_scaled")
         return w
 
+    def _skip(self, shape: ShapeInfo, reason: str):
+        """记一条"这个形状没产出 Unit、为什么"。
+
+        契约 §4.3 对 `inner_w_pt <= 0` 的要求就是"**记 warning**，不产出 Unit" ——
+        不传收集器时至少不再是"无声无息地少一块高亮"（审计 M3）。
+        """
+        if self.skipped is not None:
+            self.skipped.append({
+                "page_index": self.page.index, "shape_id": shape.shape_id,
+                "shape_name": shape.name, "reason": reason,
+            })
+
     def _text(self, shape: ShapeInfo):
         inner_left_pt = (shape.left_emu + shape.margin_left_emu) / EMU_PER_PT
         inner_top_pt = (shape.top_emu + shape.margin_top_emu) / EMU_PER_PT
         inner_w_pt = (shape.width_emu - shape.margin_left_emu - shape.margin_right_emu) / EMU_PER_PT
         inner_h_pt = (shape.height_emu - shape.margin_top_emu - shape.margin_bottom_emu) / EMU_PER_PT
-        if inner_w_pt <= 0 or inner_h_pt <= 0:
-            return
+        if inner_w_pt <= 0:
+            return self._skip(shape, "no_inner_width")
+        if inner_h_pt <= 0:
+            return self._skip(shape, "no_inner_height")
 
         base_warn = self._base_warnings(shape)
         # 契约 §2.3 把 fontScale 存成 ÷1000 后的**百分数**（fontScale="60000" → 60.0），
@@ -371,13 +386,18 @@ class _UnitBuilder:
         mr, mb = shape.margin_right_emu, shape.margin_bottom_emu
         for r, row in enumerate(shape.table_cells):
             if r + 1 >= len(row_y):
+                # 同族的静默丢弃：表格行列数组短于单元格矩阵时（被改坏的 deck.json），
+                # 剩下的行/列会无声消失（审计 L2）。既然这里已经要堵"静默丢弃"，一并记上。
+                self._skip(shape, "row_array_short")
                 break
             for c, cell in enumerate(row):
                 if c + 1 >= len(col_x):
+                    self._skip(shape, "col_array_short")
                     break
                 cell_w_pt = (col_x[c + 1] - col_x[c] - ml - mr) / EMU_PER_PT
                 cell_h_pt = (row_y[r + 1] - row_y[r] - mt - mb) / EMU_PER_PT
                 if cell_w_pt <= 0 or cell_h_pt <= 0:
+                    self._skip(shape, "zero_cell")
                     continue
                 left_pt = (shape.left_emu + col_x[c] + ml) / EMU_PER_PT
                 top_pt = (shape.top_emu + row_y[r] + mt) / EMU_PER_PT
@@ -440,16 +460,23 @@ def page_shapes(page, deck=None) -> PageShapes:
 
 
 def build_units(page, export_width_px: int = 1920,
-                pad_x_pt: float = 2.0, pad_y_pt: float = 1.0) -> list[Unit]:
+                pad_x_pt: float = 2.0, pad_y_pt: float = 1.0,
+                skipped: list | None = None) -> list[Unit]:
     """一页的形状树 → 讲解单元列表（文档序，已按行级 tight 定位）。
 
     page 收 `PageShapes` 或 `dict`（需带 width_emu/height_emu，用 `page_shapes()`
     从 deck 构造）。pad_x_pt / pad_y_pt 是补偿量：spike 实测 12/22 行墨迹触框边，
     纯 tight 会把抗锯齿边缘切掉，留 2pt/1pt 的余量。
+
+    `skipped`：可选的收集器。传 list 时，把"被丢弃、没产出 Unit"的形状追加进去
+    （`{page_index, shape_id, shape_name, reason}`）。契约 §4.3 要求
+    `inner_w_pt <= 0` 要"**记 warning**" —— 不给出口的话，用户在播放器里只会看到
+    "有些文字没有高亮"，排查时没有任何线索（审计 M3）。reason 取值：
+    `no_inner_width` / `no_inner_height` / `zero_cell`。
     """
     if not isinstance(page, PageShapes):
         raise ValueError("page 需为 PageShapes；deck.json 的 dict 请先过 page_shapes(page, deck)")
-    builder = _UnitBuilder(page, export_width_px, pad_x_pt, pad_y_pt)
+    builder = _UnitBuilder(page, export_width_px, pad_x_pt, pad_y_pt, skipped)
     builder.walk(page.shapes)
     return builder.units
 

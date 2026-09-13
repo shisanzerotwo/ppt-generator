@@ -511,3 +511,65 @@ def _index_shapes(store, shapes):
     for shape in shapes:
         store[shape.shape_id] = shape
         _index_shapes(store, shape.children)
+
+
+# ---------------------------------------------------------------- M3 丢弃出口
+
+def test_dropped_shape_is_reported_via_collector():
+    """契约 §4.3：inner_w_pt <= 0 要"记 warning"，不能无声无息地少一块高亮。"""
+    narrow = _shape(shape_id=7, name="TooNarrow", width_emu=12700 * 10,
+                    margin_left_emu=91440, margin_right_emu=91440,
+                    paragraphs=[_para("放不下")])
+    skipped: list = []
+    units = hl_layout.build_units(_page([narrow]), skipped=skipped)
+    assert units == []
+    assert skipped == [{"page_index": 0, "shape_id": 7,
+                        "shape_name": "TooNarrow", "reason": "no_inner_width"}]
+
+
+def test_no_collector_means_no_crash_and_no_record():
+    """不传收集器时行为与从前一致（只是没有出口），绝不因新增参数而抛。"""
+    narrow = _shape(width_emu=12700 * 10, margin_left_emu=91440,
+                    margin_right_emu=91440, paragraphs=[_para("放不下")])
+    assert hl_layout.build_units(_page([narrow])) == []
+
+
+def test_dropped_shape_reason_distinguishes_height():
+    tall = _shape(height_emu=12700 * 5, margin_top_emu=45720,
+                  margin_bottom_emu=45720, paragraphs=[_para("太扁")])
+    skipped: list = []
+    assert hl_layout.build_units(_page([tall]), skipped=skipped) == []
+    assert skipped[0]["reason"] == "no_inner_height"
+
+
+def test_healthy_shapes_are_not_reported():
+    ok = _shape(paragraphs=[_para("正常")])
+    skipped: list = []
+    assert len(hl_layout.build_units(_page([ok]), skipped=skipped)) == 1
+    assert skipped == []
+
+
+def test_zero_size_table_cell_is_reported():
+    from pptx_io import ShapeInfo
+    sh = ShapeInfo(shape_id=9, name="T", kind="table", left_emu=0, top_emu=0,
+                   width_emu=12700 * 100, height_emu=12700 * 100,
+                   margin_left_emu=91440, margin_right_emu=91440,
+                   table_cells=[[[_para("A1")]]],
+                   table_col_widths_emu=[12700 * 10],
+                   table_row_heights_emu=[12700 * 100])
+    skipped: list = []
+    assert hl_layout.build_units(_page([sh]), skipped=skipped) == []
+    assert skipped[0]["reason"] == "zero_cell"
+
+
+def test_short_column_array_is_reported():
+    """同族静默丢弃（审计 L2）：列宽数组短于单元格矩阵时剩下的列会无声消失。"""
+    from pptx_io import ShapeInfo
+    sh = ShapeInfo(shape_id=10, name="T", kind="table", left_emu=0, top_emu=0,
+                   width_emu=12700 * 300, height_emu=12700 * 100,
+                   table_cells=[[[_para("A1")], [_para("B1")]]],
+                   table_col_widths_emu=[12700 * 100],   # 只有 1 列，却给了 2 列单元格
+                   table_row_heights_emu=[12700 * 100])
+    skipped: list = []
+    hl_layout.build_units(_page([sh]), skipped=skipped)
+    assert "col_array_short" in [s["reason"] for s in skipped]

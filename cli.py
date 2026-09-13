@@ -112,8 +112,9 @@ def _require_bg(deck, dir_path: str) -> list:
     return bgs
 
 
-def _pages_units(deck):
-    return [hl_layout.build_units(hl_layout.page_shapes(p, deck)) for p in deck.pages]
+def _pages_units(deck, skipped: list | None = None):
+    return [hl_layout.build_units(hl_layout.page_shapes(p, deck), skipped=skipped)
+            for p in deck.pages]
 
 
 # ---------------------------------------------------------------- 设计流水线
@@ -188,8 +189,14 @@ def _cmd_import(args) -> dict:
             _log(f"--pages {args.pages}：清掉本次多导的 {len(surplus)} 张底图")
         bg_count = len(paths) - len(surplus)
 
-    units_by_page = _pages_units(deck)
+    # 布局期丢弃的形状也要有出口（审计 M3）：契约 §4.3 要求 inner_w_pt<=0 记 warning，
+    # 不接收集器的话用户只会看到"有些文字没有高亮"，排查时毫无线索。
+    layout_skipped: list = []
+    units_by_page = _pages_units(deck, layout_skipped)
     total_units = sum(len(u) for u in units_by_page)
+    for item in layout_skipped:
+        _log(f"[警告] 第{item['page_index'] + 1}页 形状'{item['shape_name']}' "
+             f"没有产出高亮（{item['reason']}）")
 
     _write_json(os.path.join(out, "deck.json"), pptx_io.deck_to_dict(deck))
     _write_json(os.path.join(out, "units.json"), [
@@ -200,10 +207,10 @@ def _cmd_import(args) -> dict:
     data = {
         "out": out, "mode": deck.mode, "width": deck.export_width_px,
         "pages": len(deck.pages), "bg": bg_count, "units": total_units,
-        "skipped": len(skipped), "warnings": _skip_summary(skipped),
+        "skipped": len(skipped) + len(layout_skipped),
+        "warnings": _skip_summary(skipped) + _skip_summary(layout_skipped),
         "deck_json": os.path.join(out, "deck.json"),
     }
-
     if deck.mode == "redesign":
         import outline
         text = _extract_text(deck)

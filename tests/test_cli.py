@@ -142,6 +142,35 @@ def test_import_writes_deck_and_units_without_com(tmp_path, capsys, monkeypatch)
     assert deck.mode == "redesign" and all(p["bg"] is None for p in deck.pages)
 
 
+def test_import_surfaces_layout_dropped_shapes(tmp_path, capsys, monkeypatch):
+    """M3：布局期被丢弃的形状要出现在 JSON 的 warnings 里。"""
+    from pptx.util import Emu
+    src = tmp_path / "narrow.pptx"
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    ok = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1))
+    ok.text_frame.text = "正常"
+    ok.text_frame.paragraphs[0].runs[0].font.size = Pt(28)
+    bad = slide.shapes.add_textbox(Emu(0), Emu(0), Emu(100000), Emu(400000))
+    bad.name = "TooNarrow"
+    bad.text_frame.text = "边距吃掉整宽"
+    prs.save(str(src))
+
+    import outline
+    monkeypatch.setattr(outline, "generate_outline_from_text",
+                        lambda text, density="balanced": [])
+    monkeypatch.setattr(cli, "_design_pipeline",
+                        lambda out, topic, slides, image_map=None: "")
+
+    code, payload, err = _run(["import", str(src), "--out", str(tmp_path / "o"),
+                               "--no-com", "--mode", "redesign"], capsys)
+    assert code == 0, payload
+    assert payload["data"]["skipped"] == 1
+    assert "no_inner_width×1" in payload["data"]["warnings"]
+    assert "TooNarrow" in err          # stderr 里也点出是哪个形状
+
+
 def test_import_truncates_bg_dir_with_pages(tmp_path, capsys, monkeypatch):
     """契约 §8.2：--pages N 时 bg/ 与 deck.json 同步截断（多余底图清掉）。"""
     src = _src_pptx(tmp_path, pages=3)
