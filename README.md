@@ -2,6 +2,17 @@
 
 AI 驱动的 PPT 生成器：输入主题，自动完成「大纲 → 生图 → 视觉校验 → **AI 自主设计 HTML 幻灯片** → 智能选风格」全流程。核心亮点是**让 LLM 根据内容自主设计每页布局**，而非固定模板——数据页画图表、概念页出卡片、封面做视觉冲击、时间线页做时间轴，真正“按内容适配”。
 
+## 📚 文档导航
+
+| 文档 | 面向 | 内容 |
+|---|---|---|
+| [**使用说明**](docs/USER_GUIDE.md) | 使用者 | 两条产线怎么用 / 工作台操作 / CLI 完整参考 / 故障排查 FAQ / 性能实测 |
+| [**开发文档**](docs/DEVELOPMENT.md) | 开发者 | 代码地图 / 数据流 / 核心约定（单位制·状态机·错误语义）/ 如何扩展 / 测试策略 / 调试手法 / 红线 |
+| [KNOWLEDGE.md](KNOWLEDGE.md) | agent | 执行手册：符号锚点 / 状态机 / 45 条路由 / 已知风险表 |
+| [docs/PPTX_INTERFACE.md](docs/PPTX_INTERFACE.md) | 开发者 | pptx 链路接口契约 v2（含被实测推翻的 16 条前提与追溯） |
+| [docs/FIX_REPORT.md](docs/FIX_REPORT.md) · [AUDIT_REPORT](docs/AUDIT_REPORT.md) · [TEST_REPORT](docs/TEST_REPORT.md) | 维护者 | 9 项遗留风险的修复记录（四段式） / 只读审计 / 独立测试（交叉验证） |
+| [PLAN_PPTX_ANIM.md](PLAN_PPTX_ANIM.md) · [PLAN_RISK_FIX.md](PLAN_RISK_FIX.md) | 维护者 | 两轮开发的计划与执行记录（含 spike 实测数据） |
+
 ## ✨ 功能特性
 
 - **LLM 自主设计 HTML**：直接把大纲 + 图片交给 LLM 生成完整单文件 HTML 幻灯片，每页布局因内容而异，纯内联 CSS + SVG，零外部依赖，可离线打开、可打印 PDF
