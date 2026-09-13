@@ -366,13 +366,76 @@ def test_unreadable_code(tmp_path):
     assert ei.value.code == "PPTX_UNREADABLE"
 
 
+_OLE2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _ole2_file(tmp_path, name, streams=()):
+    """造一个 OLE2 样本：头 + 若干 CFB 目录流名（UTF-16LE）。
+
+    分类器只依赖文件头与流名，不需要真的实现 CFB。
+    """
+    blob = bytearray(_OLE2) + b"\x00" * 504
+    for s in streams:
+        blob += s.encode("utf-16-le") + b"\x00\x00" + b"\x00" * 64
+    p = tmp_path / name
+    p.write_bytes(bytes(blob))
+    return str(p)
+
+
 def test_encrypted_code(tmp_path):
-    """加密的 Office 文件是 OLE2 复合文档（D0CF11E0...），不是 zip。"""
-    p = tmp_path / "enc.pptx"
-    p.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 512)
+    """真加密的 OOXML 是 OLE2，且含 `EncryptedPackage` 特征流 → PPTX_ENCRYPTED。
+
+    （旧版本用例只写了一个 OLE2 头就断言 PPTX_ENCRYPTED —— 那等于把"任何 OLE2
+    都算加密"的误判锁成了期望行为，审计 L1 点名。现在样本必须带真特征流。）
+    """
+    p = _ole2_file(tmp_path, "enc.pptx", ["EncryptionInfo", "EncryptedPackage"])
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(p)
+    assert ei.value.code == "PPTX_ENCRYPTED"
+    assert "密码" in ei.value.hint
+
+
+def test_legacy_ppt_reports_old_format_not_encrypted(tmp_path):
+    """老 .ppt 与加密 pptx 共用 OLE2 魔数，但提示必须可执行（L1）。"""
+    p = _ole2_file(tmp_path, "legacy.ppt", ["PowerPoint Document", "Current User"])
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(p)
+    assert ei.value.code == "PPTX_UNREADABLE"
+    assert "另存为" in ei.value.hint and ".pptx" in ei.value.hint
+    assert "密码" not in ei.value.hint
+
+
+def test_renamed_legacy_ppt_is_not_called_encrypted(tmp_path):
+    """老 .ppt 被改名成 .pptx：靠 `EncryptedPackage` 特征流认出来，别喊"去密码"。"""
+    p = _ole2_file(tmp_path, "renamed.pptx", ["PowerPoint Document"])
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(p)
+    assert ei.value.code == "PPTX_UNREADABLE"
+    assert "另存为" in ei.value.hint
+
+
+def test_ole2_with_unknown_content_defaults_to_encrypted(tmp_path, monkeypatch):
+    """读不出流名时保守当加密（与旧行为一致，不因修 L1 而放松）。"""
+    p = _ole2_file(tmp_path, "mystery.pptx", ["Whatever"])
+    monkeypatch.setattr(pptx_io, "_ole_looks_encrypted", lambda path: None)
+    with pytest.raises(pptx_io.PptxError) as ei:
+        pptx_io.read_pages(p)
+    assert ei.value.code == "PPTX_ENCRYPTED"
+
+
+def test_zip_magic_is_case_sensitive(tmp_path):
+    """回归：`_ZIP_MAGIC` 曾写成小写 `pk\\x03\\x04`，导致 zip 分支**永远不成立**。
+
+    真 zip（PK 大写）必须走到"包结构损坏"那条，而不是"不是有效的 .pptx 包"。
+    """
+    assert pptx_io._ZIP_MAGIC.startswith(b"PK")
+    p = tmp_path / "broken.pptx"
+    import zipfile
+    with zipfile.ZipFile(str(p), "w") as z:
+        z.writestr("hello.txt", "hi")      # 是合法 zip，但不是 pptx
     with pytest.raises(pptx_io.PptxError) as ei:
         pptx_io.read_pages(str(p))
-    assert ei.value.code == "PPTX_ENCRYPTED"
+    assert "包结构损坏" in ei.value.message
 
 
 def test_empty_deck_code(tmp_path):

@@ -413,7 +413,11 @@ def test_pathological_inputs_give_chinese_pptxerror(tmp_path):
     txt.write_text("不是 pptx", encoding="utf-8")
     cases.append((str(txt), "PPTX_UNREADABLE"))
     ole = tmp_path / "ole.pptx"
-    ole.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(64))
+    # 真加密的 OOXML 是 OLE2 + `EncryptedPackage` 特征流（CFB 目录以 UTF-16LE 存名）。
+    # 只写一个 OLE2 头是**假样本** —— 那等于断言"任何 OLE2 都算加密"，正是审计 L1
+    # 指出的误判（老 .ppt 也是 OLE2）。这里补上特征流，样本才代表真实加密稿。
+    ole.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(64)
+                    + "EncryptedPackage".encode("utf-16-le") + bytes(64))
     cases.append((str(ole), "PPTX_ENCRYPTED"))
     trunc = tmp_path / "trunc.pptx"
     trunc.write_bytes(b"PK\x03\x04" + bytes(100))

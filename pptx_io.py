@@ -38,8 +38,12 @@ SCHEMA_VERSION = 1
 _EMU_PER_PT = qa.EMU_PER_PT
 _DEFAULT_MARGIN_LR = 91440   # 0.1in = 7.2pt（python-pptx 默认内边距）
 _DEFAULT_MARGIN_TB = 45720   # 0.05in = 3.6pt
-_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # 加密 Office 文件是 OLE2 复合文档
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # OLE2 复合文档通用头（★不专属于加密）
 _ZIP_MAGIC = b"PK\x03\x04"   # zip 本地文件头签名；**大小写敏感**，小写 pk 永远匹配不上
+# OLE2 头也可能是这些旧格式（L1）：它们与"加密的 pptx"共用同一个魔数
+_OLE2_LEGACY_EXT = (".ppt", ".doc", ".xls", ".pps", ".pot")
+# 加密 OOXML 在 CFB 里的特征流名（目录以 UTF-16LE 存名）
+_ENCRYPTED_STREAM_MARK = "EncryptedPackage".encode("utf-16-le")
 
 # 包体安全闸门（M2）。阈值依据：
 #   解压总量 512 MB —— 真实汇报稿的底图/字体全算上也很少超过几十 MB；512 MB 已是
@@ -438,23 +442,67 @@ def _group_ch_off_ext(group, gx, gy, gw, gh):
 
 # ---------------------------------------------------------------- 读整稿
 
+def _ole_looks_encrypted(path: str):
+    """OLE2 文件里有没有加密 OOXML 的特征流 `EncryptedPackage`。
+
+    CFB 目录里流名以 **UTF-16LE** 存放，所以直接搜该编码的字节即可，不必实现 CFB
+    解析。目录在文件里的位置不固定：小文件通常靠前、大文件常被放到尾部，两头都搜。
+    返回 True/False；读不了返回 None（调用方按"保守当加密"处理）。
+    """
+    mark = _ENCRYPTED_STREAM_MARK
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if mark in f.read(1 << 20):
+                return True
+            if size > (1 << 20):
+                f.seek(max(0, size - (8 << 20)))
+                return mark in f.read()
+    except OSError:
+        return None
+    return False
+
+
 def _classify_bad_package(path: str) -> PptxError:
-    """打不开时区分"加密"与"损坏"：加密的 Office 文件是 OLE2 复合文档，
-    不是 zip。靠文件头魔数判定，比猜异常类型可靠。"""
+    """打不开时给**可执行**的归类：加密的 OOXML / 旧版 OLE2 格式 / 真损坏。
+
+    为什么不能只看魔数：`D0CF11E0` 是 OLE2 复合文档的通用头，**老 `.ppt`/`.doc`/
+    `.xls` 全是它**。v1 把它一律判成"已加密"，于是用户拿一份 `.ppt` 过来会被告知
+    "请先去掉打开密码" —— 那份文件根本没有密码，提示不可执行，还抢走了本该给的
+    "这是旧格式，请另存为 .pptx"（审计 L1）。
+
+    判据两层：**扩展名**（旧格式的主判据）+ **`EncryptedPackage` 特征流**
+    （认得出"被改名成 .pptx 的老 .ppt"）。
+    """
+    base = os.path.basename(path)
     try:
         with open(path, "rb") as f:
             head = f.read(8)
     except OSError as exc:
-        return PptxError(f"PPTX 无法打开：{os.path.basename(path)}（{exc}）", "PPTX_UNREADABLE",
+        return PptxError(f"PPTX 无法打开：{base}（{exc}）", "PPTX_UNREADABLE",
                          "确认文件未被其他程序占用")
+
     if head.startswith(_OLE_MAGIC):
+        ext = os.path.splitext(path)[1].lower()
+        if ext in _OLE2_LEGACY_EXT:
+            return PptxError(
+                f"PPTX 无法打开：{base}（这是旧版 {ext} 格式，不是 .pptx）",
+                "PPTX_UNREADABLE",
+                f"请在 PowerPoint 里打开它，「另存为」.pptx 后再导入")
+        if _ole_looks_encrypted(path) is False:
+            return PptxError(
+                f"PPTX 无法打开：{base}（OLE2 复合文档，但不是加密的 OOXML）",
+                "PPTX_UNREADABLE",
+                "很可能是把旧版 .ppt 改了扩展名：请在 PowerPoint 里「另存为」.pptx")
         return PptxError("PPTX 已加密，无法读取", "PPTX_ENCRYPTED",
                          "请先用 PowerPoint 去掉打开密码再导出")
+
     if not head.startswith(_ZIP_MAGIC):
-        return PptxError(f"PPTX 无法打开：{os.path.basename(path)}（不是有效的 .pptx 包）",
+        return PptxError(f"PPTX 无法打开：{base}（不是有效的 .pptx 包）",
                          "PPTX_UNREADABLE",
-                         "确认是 .pptx（非 .ppt/.pdf），且未被其他程序占用")
-    return PptxError(f"PPTX 无法打开：{os.path.basename(path)}（包结构损坏）", "PPTX_UNREADABLE",
+                         "确认是 .pptx（旧版 .ppt 请先在 PowerPoint 里另存为 .pptx），"
+                         "且未被其他程序占用")
+    return PptxError(f"PPTX 无法打开：{base}（包结构损坏）", "PPTX_UNREADABLE",
                      "用 PowerPoint 打开后另存一次，或换一份稿子")
 
 
