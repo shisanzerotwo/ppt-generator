@@ -81,6 +81,15 @@ a.side-item:hover { color:var(--fg); }
                          font-size:12px; color:var(--faint); }
 .art-kind { font-size:10px; font-family:var(--mono); color:var(--muted);
             border:1px solid var(--border-strong); border-radius:4px; padding:0 4px; flex-shrink:0; }
+/* 可视化制作：产物区「在 PowerPoint 打开」/ 卡片版式选择器 / 每页缩略图 */
+.pp-open { border:none; background:none; color:var(--muted); cursor:pointer;
+           padding:3px 5px; border-radius:5px; flex-shrink:0; line-height:1; }
+.pp-open:hover { color:var(--accent); background:var(--accent-soft); }
+.layout-sel { padding:2px 5px; font-size:11.5px; border:1px solid var(--border); border-radius:5px;
+              background:var(--surface); color:var(--muted); cursor:pointer; max-width:92px; }
+.layout-sel:focus { outline:none; border-color:var(--accent); }
+.card-thumb { height:34px; border-radius:4px; border:1px solid var(--border);
+              cursor:zoom-in; flex-shrink:0; display:block; background:var(--raised); }
 /* 模板 / 风格选择 */
 .tpl-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px; }
 .tpl-chip { display:flex; align-items:center; gap:6px; padding:6px 8px; cursor:pointer;
@@ -691,7 +700,7 @@ function esc(s) {
 // URL 白名单：只放行后端产出的静态路径，杜绝内联事件/属性里的注入
 function escUrl(u) {
   const s = String(u ?? '');
-  return /^\/(decks|images|files|animation|videos)\/[^"'<>\s]*$/.test(s) ? s : '';
+  return /^\/(decks|images|files|animation|videos|thumbnails)\/[^"'<>\s]*$/.test(s) ? s : '';
 }
 
 let toastTimer = null;
@@ -862,13 +871,34 @@ async function regenImage(i) {
 }
 
 // 导出后刷新侧栏产物区，用户可直接点开/下载，不必去翻 toast 里的路径
-async function exportAs(url, label) {
+async function exportAs(url, label, hint) {
   const {ok, data} = await post(url);
   if (!ok) { toast(data.error || (label + ' 导出失败')); return; }
-  toast('已导出' + label + '，见侧栏「导出产物」', 5000);
+  toast('已导出' + label + '，见侧栏「导出产物」' + (hint || ''), 5000);
   loadArtifacts();
 }
-async function doExport()     { exportAs('/api/export', ' pptx'); }
+async function doExport()     { exportAs('/api/export', ' pptx', '；点条目上的 ⇱ 可在 PowerPoint 中继续编辑'); }
+
+// ===== 可视化制作 · 闭环 1：工作台 ⇄ 本机 PowerPoint =====
+async function openInPowerpoint(name) {
+  const {ok, data} = await post('/api/open_in_powerpoint', {name});
+  toast(ok ? '已在 PowerPoint 中打开，可继续可视化编辑' : (data.error || '打开失败'),
+        ok ? 3000 : 5000);
+}
+
+// ===== 可视化制作 · 闭环 2：版式切换 / 每页缩略图 =====
+async function setSlideLayout(i, layout) {
+  const {ok, data} = await post(`/api/slide/${i}/layout`, {layout});
+  if (!ok) { toast(data.error); return; }
+  toast(`第 ${i + 1} 页版式已切换，点「重新设计」看效果`, 4000);
+}
+
+async function refreshThumbnails() {
+  const {ok, data} = await post('/api/thumbnails', {});
+  if (!ok) { toast(data.error); return; }
+  toast('正在后台生成每页缩略图（约 10~20 秒，完成后卡片自动带图）…', 5000);
+  startPolling();   // 完成写日志；文件落盘后卡片下次渲染自动带图
+}
 async function doExportAnim() {
   toast('正在生成教学动画（元素级动效）…');
   const {ok, data} = await post('/api/export_animation', {});
@@ -1240,11 +1270,15 @@ async function loadArtifacts() {
       const url = escUrl(a.url);
       if (!url) return '';
       const kind = `<span class="art-kind">${esc(a.kind.toUpperCase())}</span>`;
-      // html 走查看器（data-deck 由侧栏委托接管），其余为下载链接
+      // html 走查看器（data-deck 由侧栏委托接管），pptx 带一键打开按钮，其余为下载链接
+      const ppOpen = a.kind === 'pptx'
+        ? `<button class="pp-open" data-open="${esc(a.name)}" title="在 PowerPoint 中打开，继续可视化编辑">
+             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/></svg>
+           </button>` : '';
       return a.kind === 'html'
         ? `<button class="side-item" data-deck="${url}" data-title="${esc(a.title)}" data-when="${esc(a.when)}"
              title="${esc(a.title)} · ${esc(a.when)}">${kind}<span class="txt">${esc(a.title)}</span></button>`
-        : `<a class="side-item" href="${url}" download title="下载 ${esc(a.title)}">${kind}<span class="txt">${esc(a.title)}</span><span class="meta">${esc(a.when)}</span></a>`;
+        : `<a class="side-item" href="${url}" download title="下载 ${esc(a.title)}">${kind}<span class="txt">${esc(a.title)}</span><span class="meta">${esc(a.when)}</span>${ppOpen}</a>`;
     }).join('');
   } catch (e) { /* 产物列表失败不影响主流程 */ }
 }
@@ -1300,8 +1334,10 @@ function closeViewer() { $('viewer').close(); }
 // 点击遮罩关闭（dialog 自身收到 click 说明点在内容区外）
 $('viewer').addEventListener('click', e => { if (e.target === $('viewer')) closeViewer(); });
 
-// 事件委托（侧栏一处搞定）：历史稿/产物 html 打开查看器，历史项目载入；卡片配图开灯箱
+// 事件委托（侧栏一处搞定）：PowerPoint 打开 → 历史稿/产物 html 查看器 → 历史项目载入 → 模板操作
 $('sidebar').addEventListener('click', e => {
+  const pp = e.target.closest('button[data-open]');
+  if (pp) { e.preventDefault(); e.stopPropagation(); openInPowerpoint(pp.dataset.open); return; }
   const deck = e.target.closest('button[data-deck]');
   if (deck) { openDeckViewer(deck.dataset.deck, deck.dataset.title, deck.dataset.when); return; }
   const proj = e.target.closest('button[data-project]');
@@ -1312,7 +1348,7 @@ $('sidebar').addEventListener('click', e => {
   if (tpl) selectTemplate(tpl.dataset.tpl, tpl.classList.contains('on'));
 });
 $('cards').addEventListener('click', e => {
-  const img = e.target.closest('.img-area img[data-full]');
+  const img = e.target.closest('.img-area img[data-full], .card-thumb[data-full]');
   if (img) openLightbox(img.dataset.full, img.alt);
 });
 // 退出全屏后收回面板高度，避免 iframe 残留 100vh
@@ -1485,6 +1521,7 @@ function renderPreview(s) {
     <div class="sec-head">
       <h3><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3l1.9 5.8L20 10l-5.2 3 1.3 6-4.1-3.3L7.9 19l1.3-6L4 10l6.1-1.2z"/></svg>AI 设计稿</h3>
       <span class="sp"></span>
+      <button class="btn btn-ghost btn-sm" onclick="refreshThumbnails()" title="后台截取每页缩略图，编辑卡片头即可预览">缩略图</button>
       <button class="btn btn-ghost btn-sm" onclick="openCurrentDeck()">查看 / 放映</button>
       <button class="btn btn-ghost btn-sm" onclick="doRedesign()">重新设计</button>
     </div>
@@ -1523,7 +1560,7 @@ function checkBadge(sl) {
 function renderCards(s) {
   const wrap = $('cards');
   const sig = s.phase + '|' + s.slides.map(x =>
-    x.type + x.title + x.imageStatus + (x.image || '') + x.points.join('§') +
+    x.type + x.title + x.imageStatus + (x.image || '') + (x.layout || '') + x.points.join('§') +
     JSON.stringify(x.chart || '')).join('¶');
   if (wrap.dataset.sig === sig) return;
   // 正在输入时不重建 DOM，避免丢失未保存的编辑
@@ -1531,11 +1568,28 @@ function renderCards(s) {
       ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
   wrap.dataset.sig = sig;
 
+  // 每页缩略图（可视化预览）：/api/thumbnails 生成后按 deck 名落盘，此处按 html_path 推导引用
+  const thumbDir = s.html_path
+    ? '/thumbnails/' + s.html_path.split('/').pop().replace(/\.html$/, '') : '';
+
   wrap.innerHTML = s.slides.map((sl, i) => {
     const stype = sl.type || 'content';
     const label = TYPE_LABEL[stype] || '图文';
     const layoutTag = LAYOUT_LABEL[sl.layout]
       ? `<span class="tag sub">${LAYOUT_LABEL[sl.layout]}</span>` : '';
+    const thumb = thumbDir
+      ? `<img class="card-thumb" src="${escUrl(thumbDir)}/slide_${i + 1}.png" loading="lazy"
+             alt="第 ${i + 1} 页缩略图" title="点击放大预览" data-full="${escUrl(thumbDir)}/slide_${i + 1}.png"
+             onerror="this.remove()">` : '';
+    // 版式切换器（可视化制作）：仅内容页；配图未就绪的页禁用 image-* 版式
+    const layoutSel = stype === 'content' ? `
+      <select class="layout-sel" onchange="setSlideLayout(${i}, this.value)"
+              title="切换该页版式，导出与 AI 设计共同遵循">
+        <option value="" ${!sl.layout ? 'selected' : ''}>自动</option>
+        ${Object.entries(LAYOUT_LABEL).map(([v, t]) =>
+          `<option value="${v}" ${sl.layout === v ? 'selected' : ''}
+             ${v.startsWith('image') && !sl.image ? 'disabled' : ''}>${t}</option>`).join('')}
+      </select>` : '';
 
     let img;
     if (sl.imageStatus === 'generating') img = '<div class="loader"></div>';
@@ -1584,6 +1638,8 @@ function renderCards(s) {
         <span class="ttl">${esc(sl.title)}</span>
         ${checkBadge(sl)}
         <span class="sp"></span>
+        ${layoutSel}
+        ${thumb}
         <button class="btn btn-ghost btn-sm" onclick="moveSlide(${i},-1)" ${i===0?'disabled':''} title="上移">↑</button>
         <button class="btn btn-ghost btn-sm" onclick="moveSlide(${i},1)" ${i===s.slides.length-1?'disabled':''} title="下移">↓</button>
         <button class="btn btn-ghost btn-sm" onclick="delSlide(${i})" title="删除此页">✕</button>

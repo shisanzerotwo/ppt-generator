@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -38,10 +39,12 @@ PROJECTS_DIR = os.path.join(OUTPUT_DIR, "projects")
 ANIMATION_DIR = os.path.join(OUTPUT_DIR, "animation")
 VIDEOS_DIR = os.path.join(OUTPUT_DIR, "videos")
 PPTX_SRC_DIR = os.path.join(OUTPUT_DIR, "pptx_src")   # pptx 导入产物根（工作台入口）
+THUMBNAILS_DIR = os.path.join(OUTPUT_DIR, "thumbnails")  # 设计稿逐页缩略图（可视化编辑预览）
 # 上传的原始稿放在**被服务目录之外**，避免 /pptx/<path> 把用户原稿也一起暴露
 PPTX_UPLOAD_DIR = os.path.join(OUTPUT_DIR, "pptx_uploads")
 _video_jobs = set()  # 正在合成视频的稿名（防同稿并发叠加 worker，功能测试缺陷-2）
 _pptx_jobs = set()   # 正在导入的 pptx 名（同上，防同稿并发叠加）
+_thumbnail_jobs = set()  # 正在生成缩略图的稿名（同上）
 MAX_PPTX_BYTES = 60 * 1024 * 1024  # 上传包体上限（zip 门禁的兜底，见 KNOWLEDGE 已知风险 M2）
 
 state = {
@@ -1022,6 +1025,29 @@ def api_slide_delete(i):
     return jsonify({"ok": True})
 
 
+# 版式白名单：与 builder._add_content 的分发一一对应（layout 有值时 _resolve_layout 直接采用）
+_LAYOUT_VALUES = ("image-right", "image-left", "image-top", "image-full",
+                  "cards", "columns", "center")
+
+
+@app.route("/api/slide/<int:i>/layout", methods=["POST"])
+def api_slide_layout(i):
+    """改一页的版式（可视化制作）：导出 pptx 与 AI 设计稿共同遵循，改后点「重新设计」生效。"""
+    data = request.get_json(force=True) if request.data else {}
+    layout = str(data.get("layout") or "").strip() or None
+    if layout is not None and layout not in _LAYOUT_VALUES:
+        return jsonify({"error": "未知版式，可选："
+                        + "、".join(_LAYOUT_VALUES) + "，或留空恢复自动"}), 400
+    with lock:
+        if state["phase"] not in ("ready", "review"):
+            return jsonify({"error": "请等待生成完成再调整版式"}), 409
+        if i < 0 or i >= len(state["slides"]):
+            return jsonify({"error": "页码不存在"}), 404
+        state["slides"][i]["layout"] = layout
+    _log(f"第 {i + 1} 页版式已切换：{layout or '自动'}")
+    return jsonify({"ok": True, "layout": layout})
+
+
 @app.route("/api/projects")
 def api_projects():
     """历史项目列表（路线图 #8，按时间倒序，最多 30 条）。"""
@@ -1529,6 +1555,29 @@ def decks(filename):
 ARTIFACT_EXT = (".pptx", ".pdf", ".txt")
 
 
+@app.route("/api/open_in_powerpoint", methods=["POST"])
+def api_open_in_powerpoint():
+    """用系统文件关联在本机 PowerPoint 中打开 output 下的 pptx，继续可视化编辑。
+
+    零 COM 调用（不触碰 S1/D1/Visible 守卫体系）：Windows 文件关联即开。
+    """
+    data = request.get_json(force=True) if request.data else {}
+    name = os.path.basename(str(data.get("name") or ""))
+    if not name.lower().endswith(".pptx"):
+        return jsonify({"error": "只支持打开 .pptx 产物"}), 400
+    full = os.path.join(OUTPUT_DIR, name)
+    if not os.path.isfile(full):
+        return jsonify({"error": "文件不存在，请先导出"}), 404
+    if sys.platform != "win32":
+        return jsonify({"error": "仅在 Windows 上支持在 PowerPoint 中打开"}), 501
+    try:
+        os.startfile(full)  # noqa: S606 - 用户主动点击触发，走系统文件关联
+    except OSError as e:
+        return jsonify({"error": f"打开失败：{e}（未安装 PowerPoint 或无 .pptx 文件关联）"}), 500
+    _log(f"已在 PowerPoint 中打开：{name}")
+    return jsonify({"ok": True})
+
+
 @app.route("/api/artifacts")
 def api_artifacts():
     """列出可打开/下载的产物：output 根下 pptx/pdf/txt + decks 下 html。"""
@@ -1595,6 +1644,51 @@ def artifact_files(filename):
     if not filename.lower().endswith(ARTIFACT_EXT):
         return jsonify({"error": "该类型不支持下载"}), 403
     return send_from_directory(OUTPUT_DIR, filename, as_attachment=True)
+
+
+@app.route("/api/thumbnails", methods=["POST"])
+def api_thumbnails():
+    """后台截当前设计稿逐页缩略图（可视化编辑的页面预览）。
+
+    产物在 /thumbnails/<deck名>/slide_N.png，前端按 html_path 推导引用；
+    按 deck 文件名隔离目录，重新设计后天然对应新稿。
+    """
+    with lock:
+        if state["phase"] not in ("ready", "review"):
+            return jsonify({"error": "请等待生成完成再刷新缩略图"}), 409
+        html_path = state.get("html_path")
+    if not html_path:
+        return jsonify({"error": "当前没有设计稿"}), 409
+    local = os.path.join(DECKS_DIR, os.path.basename(unquote(html_path)))
+    if not os.path.isfile(local):
+        return jsonify({"error": "设计稿文件已不存在"}), 404
+    name = os.path.splitext(os.path.basename(local))[0]
+    out_dir = os.path.join(THUMBNAILS_DIR, name)
+    with lock:
+        if name in _thumbnail_jobs:
+            return jsonify({"error": "缩略图正在生成中，请看日志进度"}), 409
+        _thumbnail_jobs.add(name)
+
+    def worker():
+        try:
+            shots = shot_mod.shot_deck(local, out_dir)
+            _log(f"缩略图已更新：{len(shots)} 页（卡片预览可用了）")
+        except Exception as e:  # noqa: BLE001
+            _log(f"缩略图生成失败：{e}")
+        finally:
+            with lock:
+                _thumbnail_jobs.discard(name)
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jsonify({"ok": True, "queued": True, "dir": f"/thumbnails/{quote(name)}"})
+
+
+@app.route("/thumbnails/<path:filename>")
+def thumbnail_files(filename):
+    """缩略图（仅 .png 白名单）。send_from_directory 内部做 safe_join。"""
+    if not filename.lower().endswith(".png"):
+        return jsonify({"error": "该类型不支持访问"}), 403
+    return send_from_directory(THUMBNAILS_DIR, filename)
 
 
 @app.route("/api/decks")
