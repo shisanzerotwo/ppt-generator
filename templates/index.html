@@ -269,10 +269,10 @@ a.side-item:hover { color:var(--fg); }
 @keyframes spin { to { transform:rotate(360deg); } }
 /* ===== AI 设计稿预览 ===== */
 #deck-preview { margin-bottom:20px; }
-/* L2 排版：单栏卡片流（居中窄列）+ 右侧窄预览列 */
+/* L2 排版：工作区与预览区等比例双栏 */
 .workarea { margin-top:4px; }
-.workarea.split { display:grid; grid-template-columns:minmax(0,1fr) 272px;
-                  gap:22px; align-items:start; max-width:1100px; margin:0 auto; }
+.workarea.split { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+                  gap:22px; align-items:start; }
 .workarea:not(.split) { max-width:760px; margin:0 auto; }
 .workarea.split .col-show { position:sticky; top:20px; }
 .workarea.split .col-show #deck-preview { margin-bottom:0; }
