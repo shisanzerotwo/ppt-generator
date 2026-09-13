@@ -259,7 +259,7 @@ def _make_pdf(text="Hello Wiring"):
 
 def test_import_file_pdf_routes_to_parser(ready_deck, client, monkeypatch):
     monkeypatch.setattr(app_mod.outline, "generate_outline_from_text",
-                        lambda text: (_ for _ in ()).throw(RuntimeError("stop-here")))
+                        lambda text, density=None, length=None: (_ for _ in ()).throw(RuntimeError("stop-here")))
     # 文本须 ≥30 字，否则被「文档内容过短」拦在解析之后
     resp = client.post("/api/import_file", data={
         "file": (io.BytesIO(_make_pdf("Hello Wiring, this is a long enough body text.")), "t.pdf")},

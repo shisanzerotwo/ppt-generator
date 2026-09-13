@@ -6,13 +6,13 @@ PROMPT_TEMPLATE = """你是一位专业的 PPT 策划师。用户会给你一个
 
 页面用 type 标记版式，每页是一个对象。结构要求（必须严格遵守）：
 1. 第 1 页 type="cover"（封面，title 为主题，points 空列表）；第 2 页 type="toc"（目录，title="目录"，points 为各章节标题列表）
-2. 按章节组织：每章开头一个 type="section" 页（title 为章标题，points 为该章一句话简介），其后是该章 2 个 type="content" 页
+2. 按章节组织：每章开头一个 type="section" 页（title 为章标题，points 为该章一句话简介），其后是该章 2~3 个 type="content" 页
 3. 最后 1 页 type="end"（总结/行动项，title 一句总结）
 4. 出现可量化的对比/分布信息时，用 type="data" 页替代一个 content 页，并给 chart: {{"type": "bar|column|pie|line", "labels": ["项1","项2",...], "values": [数字, ...]}}。chart.type 按数据性质选：占比/份额用 pie、时间趋势用 line、类别对比用 column、类别横向对比用 bar；拿不准可省略 type 让系统自动选
 5. 有明确的时间/阶段演进（如发展历程、历史节点）时，可用 type="timeline" 页（points 为按时间顺序的节点，每条含时间+事件，如"2015年：成立"）
 6. 需要左右对照（如优劣、方案对比、前后对比）时，可用 type="compare" 页（points 前一半放左栏、后一半放右栏）
 
-总页数必须控制在 8~10 页之间，绝对不要超过 10 页，不要过度分章。
+总页数控制在 {pages_hint}。
 
 每页 image_prompt 规则：
 - cover 页：描述体现主题的封面插图（非空）
@@ -44,12 +44,12 @@ FROM_TEXT_PROMPT = """你是一位专业的 PPT 策划师。用户会给你一�
 
 页面用 type 标记版式，每页是一个对象。结构要求（必须严格遵守）：
 1. 第 1 页 type="cover"（封面，title 为文档主题，points 空列表）；第 2 页 type="toc"（目录，title="目录"，points 为各章节标题列表）
-2. 按章节组织：每章开头一个 type="section" 页（title 为章标题，points 为该章一句话简介），其后是该章 2 个 type="content" 页
+2. 按章节组织：每章开头一个 type="section" 页（title 为章标题，points 为该章一句话简介），其后是该章 2~3 个 type="content" 页
 3. 最后 1 页 type="end"（总结/行动项，title 一句总结）
 4. 出现可量化的对比/分布信息时，用 type="data" 页替代一个 content 页，并给 chart: {{"type": "bar|column|pie|line", "labels": [...], "values": [...]}}
 5. 有明确时间演进用 type="timeline" 页（points 为时间节点）；需左右对照用 type="compare" 页（points 前一半左栏、后一半右栏）
 
-总页数必须控制在 8~10 页之间。
+总页数控制在 {pages_hint}。
 
 【提炼要求】不要照搬原文长段落，只保留文档核心信息，基于原文提炼、原文信息不足时不编造。content 页 points 每条用「标题：描述」格式（中文冒号分隔）。
 {density_hint}
@@ -74,8 +74,15 @@ DENSITY_HINTS = {
     "sparse": "【内容密度：精简】每页要点 2 条；每条「标题：描述」，描述 10~20 字，点到即止。",
     "balanced": "【内容密度：标准】每页要点 3 条；每条「标题：描述」，标题 6~12 字，"
                 "描述 20~35 字，写具体的事实、机制或例子，禁止空话套话。",
-    "dense": "【内容密度：详实】每页要点 3~4 条；每条描述 30~50 字，必须包含具体的机制解释、"
-             "数据、例子或对比；data 页的 chart 给 4~6 组数据。",
+    "dense": "【内容密度：详实】每页要点 4~5 条；每条「标题：描述」，标题 6~12 字，"
+             "描述 40~60 字，必须包含具体的机制解释、数据、例子或对比；data 页的 chart 给 5~8 组数据。",
+}
+
+# 篇幅档位：控制大纲总页数（提示词参数化，默认标准）
+PAGE_HINTS = {
+    "standard": "8~10 页之间，绝对不要超过 10 页，不要过度分章",
+    "extended": "12~15 页之间，绝对不要超过 15 页，分 3~5 章",
+    "deep": "16~20 页之间，绝对不要超过 20 页，分 4~6 章，每章可含 2~3 个 content 页",
 }
 
 
@@ -150,12 +157,12 @@ def _generate_once(client, model, prompt_text, feedback=""):
     return _normalize(slides)
 
 
-def _self_critique(client, model, label, slides) -> str:
+def _self_critique(client, model, label, slides, pages_hint="8~10 页之间") -> str:
     """自评大纲结构是否完整，返回需改进的问题描述；无问题返回空串。"""
     cur = json.dumps([{"type": s["type"], "title": s["title"]} for s in slides], ensure_ascii=False)
     prompt = (
         f"主题「{label}」的 PPT 大纲如下（只列 type 和 title）：\n{cur}\n\n"
-        "判断这份大纲结构是否完整合理。重点看：是否缺封面/目录/总结页、页数是否在 8~10 之间、"
+        f"判断这份大纲结构是否完整合理。重点看：是否缺封面/目录/总结页、页数是否在{pages_hint}、"
         "章节划分是否清晰。只输出两行：\n第一行：没问题 或 有问题\n第二行：若有问题，一句话描述需改进什么"
     )
     resp = client.chat.completions.create(
@@ -198,14 +205,14 @@ def _diversify_layouts(slides: list) -> list:
     return slides
 
 
-def _generate_with_prompt(prompt_text: str, label: str) -> list[dict]:
+def _generate_with_prompt(prompt_text: str, label: str, pages_hint: str = "8~10 页之间") -> list[dict]:
     client, model = _client()
     last_err = None
     for attempt in range(2):
         try:
             slides = _generate_once(client, model, prompt_text)
             # 自评迭代：有问题则带意见再生成一轮（封顶 1 次改进）
-            feedback = _self_critique(client, model, label, slides)
+            feedback = _self_critique(client, model, label, slides, pages_hint)
             if feedback:
                 try:
                     slides = _generate_once(client, model, prompt_text, feedback)
@@ -217,16 +224,20 @@ def _generate_with_prompt(prompt_text: str, label: str) -> list[dict]:
     raise RuntimeError(f"大纲生成失败（已重试 1 次）: {last_err}")
 
 
-def generate_outline(topic: str, density: str = "balanced") -> list[dict]:
+def generate_outline(topic: str, density: str = "balanced", length: str = "standard") -> list[dict]:
     hint = DENSITY_HINTS.get(density, DENSITY_HINTS["balanced"])
-    return _generate_with_prompt(PROMPT_TEMPLATE.format(topic=topic, density_hint=hint), topic)
+    pages_hint = PAGE_HINTS.get(length, PAGE_HINTS["standard"])
+    prompt = PROMPT_TEMPLATE.format(topic=topic, density_hint=hint, pages_hint=pages_hint)
+    return _generate_with_prompt(prompt, topic, pages_hint)
 
 
-def generate_outline_from_text(text: str, density: str = "balanced") -> list[dict]:
+def generate_outline_from_text(text: str, density: str = "balanced", length: str = "standard") -> list[dict]:
     hint = DENSITY_HINTS.get(density, DENSITY_HINTS["balanced"])
-    # 详实档需要更多原文素材支撑
-    cap = 12000 if density == "dense" else 6000
-    return _generate_with_prompt(FROM_TEXT_PROMPT.format(text=text[:cap], density_hint=hint), "文档内容")
+    pages_hint = PAGE_HINTS.get(length, PAGE_HINTS["standard"])
+    # 详实档需要更多原文素材支撑；深度篇幅同理（更多页需要更多原文信息）
+    cap = 12000 if density == "dense" or length != "standard" else 6000
+    prompt = FROM_TEXT_PROMPT.format(text=text[:cap], density_hint=hint, pages_hint=pages_hint)
+    return _generate_with_prompt(prompt, "文档内容", pages_hint)
 
 
 if __name__ == "__main__":

@@ -101,7 +101,8 @@ def _parse_upload(file) -> str:
     return file.read().decode("utf-8", errors="ignore")
 
 
-def _start_generation(content: str, from_text: bool, density: str = "balanced") -> bool:
+def _start_generation(content: str, from_text: bool, density: str = "balanced",
+                      length: str = "standard") -> bool:
     """锁内初始化 state 并启动后台 worker，避免 phase 置位竞态。"""
     with lock:
         if state["phase"] not in ("idle", "ready"):
@@ -111,6 +112,7 @@ def _start_generation(content: str, from_text: bool, density: str = "balanced") 
         state["style"] = None
         state["style_name"] = ""
         state["density"] = density  # 内容密度档位（大纲缓存键的一部分）
+        state["length"] = length    # 篇幅档位（大纲页数，大纲缓存键的一部分）
         # 注意：brand 不在此重置——它是用户级偏好，设过就跨生成生效，直到手动清除
         state["html_path"] = None
         state["log"] = []
@@ -118,7 +120,8 @@ def _start_generation(content: str, from_text: bool, density: str = "balanced") 
         state["phase"] = "outline"
     resume_event.clear()   # 防上一轮残留的放行信号让本次暂停被瞬间跳过
     os.makedirs(IMAGES_DIR, exist_ok=True)
-    threading.Thread(target=_generation_worker, args=(content, from_text, density), daemon=True).start()
+    threading.Thread(target=_generation_worker, args=(content, from_text, density, length),
+                     daemon=True).start()
     return True
 
 
@@ -227,18 +230,20 @@ def _pause_gate(step: str, label: str):
             state["phase"] = "images" if step == "outline" else "designing"
 
 
-def _outline_cache_path(content: str, from_text: bool, density: str = "balanced") -> str:
+def _outline_cache_path(content: str, from_text: bool, density: str = "balanced",
+                        length: str = "standard") -> str:
     """大纲指纹缓存路径：同主题/同文档重生成免一次 30~200s 的 LLM 调用（速度优化②）。
 
-    键含密度档位——同主题换个详实度理应重出大纲。路径运行时从 OUTPUT_DIR 拼
+    键含密度与篇幅档位——同主题换密度或篇幅理应重出大纲。路径运行时从 OUTPUT_DIR 拼
     （不用导入期常量），测试 monkeypatch 才能生效。
     """
-    key = hashlib.sha256(f"{from_text}|{density}|{content}".encode("utf-8")).hexdigest()
+    key = hashlib.sha256(f"{from_text}|{density}|{length}|{content}".encode("utf-8")).hexdigest()
     return os.path.join(OUTPUT_DIR, "outline_cache", f"{key}.json")
 
 
-def _load_outline_cache(content: str, from_text: bool, density: str = "balanced"):
-    path = _outline_cache_path(content, from_text, density)
+def _load_outline_cache(content: str, from_text: bool, density: str = "balanced",
+                        length: str = "standard"):
+    path = _outline_cache_path(content, from_text, density, length)
     if not os.path.isfile(path):
         return None
     try:
@@ -249,9 +254,10 @@ def _load_outline_cache(content: str, from_text: bool, density: str = "balanced"
         return None
 
 
-def _save_outline_cache(content: str, from_text: bool, slides: list, density: str = "balanced"):
+def _save_outline_cache(content: str, from_text: bool, slides: list, density: str = "balanced",
+                        length: str = "standard"):
     try:
-        path = _outline_cache_path(content, from_text, density)
+        path = _outline_cache_path(content, from_text, density, length)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -380,28 +386,29 @@ def _without_images(slides: list) -> list:
     return out
 
 
-def _generation_worker(content: str, from_text: bool, density: str = "balanced"):
+def _generation_worker(content: str, from_text: bool, density: str = "balanced",
+                       length: str = "standard"):
     t0 = time.time()
     try:
         if from_text:
             _log("从文档提炼大纲…")
-            slides = _load_outline_cache(content, True, density)
+            slides = _load_outline_cache(content, True, density, length)
             if slides:
                 _log("命中大纲缓存，直接复用（输入指纹一致）")
             else:
-                slides = outline.generate_outline_from_text(content, density)
-                _save_outline_cache(content, True, slides, density)
+                slides = outline.generate_outline_from_text(content, density, length)
+                _save_outline_cache(content, True, slides, density, length)
             if slides:
                 with lock:
                     state["topic"] = slides[0].get("title", "") or content[:20]
         else:
             _log(f"生成大纲：{content}")
-            slides = _load_outline_cache(content, False, density)
+            slides = _load_outline_cache(content, False, density, length)
             if slides:
                 _log("命中大纲缓存，直接复用（输入指纹一致）")
             else:
-                slides = outline.generate_outline(content, density)
-                _save_outline_cache(content, False, slides, density)
+                slides = outline.generate_outline(content, density, length)
+                _save_outline_cache(content, False, slides, density, length)
         if not llm_util.images_enabled():
             slides = _without_images(slides)
             _log("配图已关闭（runtime_config.json 的 images 键），全部走无图排版")
@@ -534,7 +541,10 @@ def api_generate():
     density = data.get("density") or "balanced"
     if density not in outline.DENSITY_HINTS:
         return jsonify({"error": "density 需为 sparse / balanced / dense"}), 400
-    if not _start_generation(topic, False, density):
+    length = data.get("length") or "standard"
+    if length not in outline.PAGE_HINTS:
+        return jsonify({"error": "length 需为 standard / extended / deep"}), 400
+    if not _start_generation(topic, False, density, length):
         return jsonify({"error": "正在生成中，请等待完成"}), 409
     return jsonify({"ok": True})
 
@@ -550,7 +560,10 @@ def api_import():
     density = data.get("density") or "balanced"
     if density not in outline.DENSITY_HINTS:
         return jsonify({"error": "density 需为 sparse / balanced / dense"}), 400
-    if not _start_generation(text.strip(), True, density):
+    length = data.get("length") or "standard"
+    if length not in outline.PAGE_HINTS:
+        return jsonify({"error": "length 需为 standard / extended / deep"}), 400
+    if not _start_generation(text.strip(), True, density, length):
         return jsonify({"error": "正在生成中，请等待完成"}), 409
     return jsonify({"ok": True})
 
@@ -563,13 +576,16 @@ def api_import_file():
     density = request.form.get("density") or "balanced"
     if density not in outline.DENSITY_HINTS:
         return jsonify({"error": "density 需为 sparse / balanced / dense"}), 400
+    length = request.form.get("length") or "standard"
+    if length not in outline.PAGE_HINTS:
+        return jsonify({"error": "length 需为 standard / extended / deep"}), 400
     try:
         text = _parse_upload(f)
     except Exception as e:
         return jsonify({"error": f"文件解析失败：{e}"}), 400
     if len(text.strip()) < 30:
         return jsonify({"error": "文档内容过短"}), 400
-    if not _start_generation(text.strip(), True, density):
+    if not _start_generation(text.strip(), True, density, length):
         return jsonify({"error": "正在生成中，请等待完成"}), 409
     return jsonify({"ok": True})
 

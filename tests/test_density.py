@@ -41,31 +41,45 @@ def isolate(tmp_path, monkeypatch):
 
 
 def test_prompt_carries_density_hint():
-    dense = outline.PROMPT_TEMPLATE.format(topic="t", density_hint=outline.DENSITY_HINTS["dense"])
-    assert "3~4 条" in dense and "30~50 字" in dense
-    sparse = outline.PROMPT_TEMPLATE.format(topic="t", density_hint=outline.DENSITY_HINTS["sparse"])
+    dense = outline.PROMPT_TEMPLATE.format(topic="t", density_hint=outline.DENSITY_HINTS["dense"],
+                                           pages_hint=outline.PAGE_HINTS["standard"])
+    assert "4~5 条" in dense and "40~60 字" in dense
+    sparse = outline.PROMPT_TEMPLATE.format(topic="t", density_hint=outline.DENSITY_HINTS["sparse"],
+                                            pages_hint=outline.PAGE_HINTS["standard"])
     assert "2 条" in sparse
-    ft = outline.FROM_TEXT_PROMPT.format(text="x", density_hint=outline.DENSITY_HINTS["balanced"])
+    ft = outline.FROM_TEXT_PROMPT.format(text="x", density_hint=outline.DENSITY_HINTS["balanced"],
+                                         pages_hint=outline.PAGE_HINTS["standard"])
     assert "内容密度：标准" in ft
 
 
-def test_generate_passes_density_to_outline(client, monkeypatch):
+def test_prompt_carries_length_pages():
+    deep = outline.PROMPT_TEMPLATE.format(topic="t", density_hint=outline.DENSITY_HINTS["balanced"],
+                                          pages_hint=outline.PAGE_HINTS["deep"])
+    assert "16~20 页" in deep and "绝对不要超过 20 页" in deep
+    ext = outline.FROM_TEXT_PROMPT.format(text="x", density_hint=outline.DENSITY_HINTS["balanced"],
+                                          pages_hint=outline.PAGE_HINTS["extended"])
+    assert "12~15 页" in ext
+
+
+def test_generate_passes_density_and_length(client, monkeypatch):
     seen = {}
 
-    def fake_outline(topic, density="balanced"):
+    def fake_outline(topic, density="balanced", length="standard"):
         seen["density"] = density
+        seen["length"] = length
         return [{"type": "cover", "title": "封面", "points": [], "image_prompt": "",
                  "chart": None, "layout": None}]
 
     monkeypatch.setattr(outline, "generate_outline", fake_outline)
     client.post("/api/stepwise", json={"enabled": False})
-    client.post("/api/generate", json={"topic": "密度透传", "density": "dense"})
-    # 等 worker 跑完（ready），断言 outline 收到了 dense
+    client.post("/api/generate", json={"topic": "密度透传", "density": "dense", "length": "deep"})
+    # 等 worker 跑完（ready），断言 outline 收到了 dense + deep
     import time
     deadline = time.time() + 8
     while time.time() < deadline and app_mod.state["phase"] != "ready":
         time.sleep(0.1)
     assert seen["density"] == "dense"
+    assert seen["length"] == "deep"
 
 
 def test_invalid_density_rejected(client):
@@ -73,8 +87,20 @@ def test_invalid_density_rejected(client):
     assert resp.status_code == 400
 
 
+def test_invalid_length_rejected(client):
+    resp = client.post("/api/generate", json={"topic": "t", "length": "一百页"})
+    assert resp.status_code == 400
+
+
 def test_cache_key_differs_by_density(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "OUTPUT_DIR", str(tmp_path))
     k1 = app_mod._outline_cache_path("主题", False, "sparse")
     k2 = app_mod._outline_cache_path("主题", False, "dense")
+    assert k1 != k2
+
+
+def test_cache_key_differs_by_length(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_mod, "OUTPUT_DIR", str(tmp_path))
+    k1 = app_mod._outline_cache_path("主题", False, "balanced", "standard")
+    k2 = app_mod._outline_cache_path("主题", False, "balanced", "deep")
     assert k1 != k2

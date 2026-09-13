@@ -570,6 +570,11 @@ a.side-item:hover { color:var(--fg); }
     <div class="cmd-row">
       <span class="pill-badge" id="style-badge"></span>
       <input id="topic" placeholder="输入演示主题，回车开始生成" onkeydown="if(event.key==='Enter')doGenerate()">
+      <select id="length-sel" class="density-sel" title="篇幅：生成多少页">
+        <option value="standard" selected>标准 · 8~10页</option>
+        <option value="extended">加长 · 12~15页</option>
+        <option value="deep">深度 · 16~20页</option>
+      </select>
       <select id="density-sel" class="density-sel" title="内容详实程度：要点数与每条描述的字数">
         <option value="sparse">精简</option>
         <option value="balanced" selected>标准</option>
@@ -778,7 +783,8 @@ async function post(url, body) {
 async function doGenerate() {
   const topic = $('topic').value.trim();
   if (!topic) { toast('请先输入主题'); return; }
-  const {ok, data} = await post('/api/generate', {topic, density: $('density-sel').value});
+  const {ok, data} = await post('/api/generate',
+    {topic, density: $('density-sel').value, length: $('length-sel').value});
   if (!ok) { toast(data.error); return; }
   $('btn-gen').disabled = true;
   setExports(true);
@@ -791,6 +797,7 @@ async function doImport(input) {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('density', $('density-sel').value);
+  fd.append('length', $('length-sel').value);
   toast('正在解析文档…');
   const r = await fetch('/api/import_file', {method: 'POST', body: fd});
   const data = await r.json();

@@ -129,7 +129,7 @@ def test_import_writes_deck_and_units_without_com(tmp_path, capsys, monkeypatch)
                         lambda out, topic, slides, image_map=None: os.path.join(out, "deck.html"))
     import outline
     monkeypatch.setattr(outline, "generate_outline_from_text",
-                        lambda text, density="balanced": [{"type": "content", "title": "t",
+                        lambda text, density="balanced", length="standard": [{"type": "content", "title": "t",
                                                            "points": ["a"]}])
     out = tmp_path / "o"
     code, payload, _ = _run(["import", src, "--out", str(out), "--no-com",
@@ -159,7 +159,7 @@ def test_import_surfaces_layout_dropped_shapes(tmp_path, capsys, monkeypatch):
 
     import outline
     monkeypatch.setattr(outline, "generate_outline_from_text",
-                        lambda text, density="balanced": [])
+                        lambda text, density="balanced", length="standard": [])
     monkeypatch.setattr(cli, "_design_pipeline",
                         lambda out, topic, slides, image_map=None: "")
 
@@ -186,7 +186,7 @@ def test_import_surfaces_unit_precision_warnings(tmp_path, capsys, monkeypatch):
 
     import outline
     monkeypatch.setattr(outline, "generate_outline_from_text",
-                        lambda text, density="balanced": [])
+                        lambda text, density="balanced", length="standard": [])
     monkeypatch.setattr(cli, "_design_pipeline",
                         lambda out, topic, slides, image_map=None: "")
 
@@ -331,7 +331,7 @@ def test_export_default_output_path(tmp_path, capsys):
 def test_deck_command_runs_pipeline(tmp_path, capsys, monkeypatch):
     import outline
     monkeypatch.setattr(outline, "generate_outline",
-                        lambda topic, density="balanced": [{"type": "cover", "title": topic}])
+                        lambda topic, density="balanced", length="standard": [{"type": "cover", "title": topic}])
     monkeypatch.setattr(cli, "_design_pipeline",
                         lambda out, topic, slides, image_map=None: os.path.join(out, "deck.html"))
     out = tmp_path / "o"
