@@ -20,7 +20,7 @@
 python 模块      7038 行 / 12 个
 前端             1594 行（templates/index.html，单文件工作台）
 测试             37 个文件 / 1066 条用例
-HTTP 路由        49 条
+HTTP 路由        53 条
 ```
 
 **运行形态**：本地单用户。全局 `state` + `lock` + worker 线程，**单任务**（不面向多用户/公网）。
@@ -33,7 +33,7 @@ HTTP 路由        49 条
 
 ```
 [L1 接入层]
-  app.py (1690)          Flask + 49 路由 + 状态机 + 三套导出接线
+  app.py (1700)          Flask + 53 路由 + 状态机 + 三套导出接线
   templates/index.html   工作台前端（单文件：步骤条/两栏/预览/日志）
   cli.py (433)           pptgen CLI —— agent 入口（方向 B）
   main.py                旧 CLI（仅 大纲→生图→builder pptx，保留未废弃）

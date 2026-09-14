@@ -101,6 +101,11 @@ a.side-item:hover { color:var(--fg); }
 .tpl-chip .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tpl-del { margin-left:auto; color:var(--muted); font-size:13px; line-height:1; padding:2px 4px; border-radius:4px; flex-shrink:0; }
 .tpl-del:hover { color:var(--danger); background:rgba(179,68,46,.12); }
+/* 删除 ✕ 默认隐藏，悬停条目时浮现 */
+.side-item .tpl-del { opacity:0; transition:opacity var(--t); }
+.side-item:hover .tpl-del, .side-item .tpl-del:focus-visible { opacity:1; }
+.px-del { border:none; background:none; color:var(--danger); font-size:11px; cursor:pointer; padding:0; }
+.px-del:hover { text-decoration:underline; }
 .model-grid { display:flex; flex-direction:column; gap:6px; padding:6px 2px; }
 .model-grid > * { min-width: 0; }
 .model-grid label { display:flex; flex-direction:column; gap:3px; font-size:11.5px; color:var(--muted); }
@@ -829,7 +834,8 @@ function renderPptxStatus(p) {
     return;
   }
   el.innerHTML = `<b>${esc(p.name || '')} · ${p.pages} 页 / ${p.units} 个讲解单元</b>` +
-    `<span class="pxlog"><a href="${esc(p.player)}" target="_blank" rel="noopener">▶ 打开高亮播放器</a></span>`;
+    `<span class="pxlog"><a href="${esc(p.player)}" target="_blank" rel="noopener">▶ 打开高亮播放器</a>` +
+    ` · <button class="px-del" data-del-pptx="${esc(p.name)}" title="删除上传原稿与导入产物（移入回收站）">删除记录</button></span>`;
 }
 
 async function pptxRefresh() {
@@ -1293,6 +1299,7 @@ async function loadDecks() {
          title="${esc(d.title)} · ${esc(d.when)}">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg>
          <span class="txt">${esc(d.title)}</span><span class="meta">${esc(d.when)}</span>
+         <span class="tpl-del" data-del-deck="${esc(d.name)}" title="删除此设计稿（联动清理缩略图/动画/导出文件，移入回收站）">×</span>
        </button>`).join('');
   } catch (e) { /* 历史列表失败不影响主流程 */ }
 }
@@ -1305,15 +1312,17 @@ async function loadArtifacts() {
       const url = escUrl(a.url);
       if (!url) return '';
       const kind = `<span class="art-kind">${esc(a.kind.toUpperCase())}</span>`;
-      // html 走查看器（data-deck 由侧栏委托接管），pptx 带一键打开按钮，其余为下载链接
+      // html 走查看器（data-deck 由侧栏委托接管），pptx/pdf/txt/mp4 可删除，其余为下载链接
       const ppOpen = a.kind === 'pptx'
         ? `<button class="pp-open" data-open="${esc(a.name)}" title="在 PowerPoint 中打开，继续可视化编辑">
              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/></svg>
            </button>` : '';
+      const delBtn = a.kind !== 'anim'
+        ? `<span class="tpl-del" data-del-af="${esc(a.name)}" title="删除此产物（移入回收站，7 天内可找回）">×</span>` : '';
       return a.kind === 'html'
         ? `<button class="side-item" data-deck="${url}" data-title="${esc(a.title)}" data-when="${esc(a.when)}"
-             title="${esc(a.title)} · ${esc(a.when)}">${kind}<span class="txt">${esc(a.title)}</span></button>`
-        : `<a class="side-item" href="${url}" download title="下载 ${esc(a.title)}">${kind}<span class="txt">${esc(a.title)}</span><span class="meta">${esc(a.when)}</span>${ppOpen}</a>`;
+             title="${esc(a.title)} · ${esc(a.when)}">${kind}<span class="txt">${esc(a.title)}</span>${delBtn}</button>`
+        : `<a class="side-item" href="${url}" download title="下载 ${esc(a.title)}">${kind}<span class="txt">${esc(a.title)}</span><span class="meta">${esc(a.when)}</span>${ppOpen}${delBtn}</a>`;
     }).join('');
   } catch (e) { /* 产物列表失败不影响主流程 */ }
 }
@@ -1369,8 +1378,29 @@ function closeViewer() { $('viewer').close(); }
 // 点击遮罩关闭（dialog 自身收到 click 说明点在内容区外）
 $('viewer').addEventListener('click', e => { if (e.target === $('viewer')) closeViewer(); });
 
-// 事件委托（侧栏一处搞定）：PowerPoint 打开 → 历史稿/产物 html 查看器 → 历史项目载入 → 模板操作
+// 事件委托（侧栏一处搞定）：删除 → PowerPoint 打开 → 历史稿/产物 html 查看器 → 历史项目载入 → 模板操作
 $('sidebar').addEventListener('click', e => {
+  const delDeck = e.target.closest('[data-del-deck]');
+  if (delDeck) {
+    e.preventDefault(); e.stopPropagation();
+    if (confirm('删除这份设计稿？其缩略图、教学动画、导出的 pptx/pdf/视频会一并移入回收站（保留 7 天可找回）。'))
+      delDeckBundle(delDeck.dataset.delDeck);
+    return;
+  }
+  const delProj = e.target.closest('[data-del-project]');
+  if (delProj) {
+    e.preventDefault(); e.stopPropagation();
+    if (confirm('删除这条历史项目记录？（移入回收站，7 天内可找回；设计稿文件不受影响）'))
+      delRecord('/api/projects/delete', delProj.dataset.delProject, loadProjects);
+    return;
+  }
+  const delAf = e.target.closest('[data-del-af]');
+  if (delAf) {
+    e.preventDefault(); e.stopPropagation();
+    if (confirm('删除这个导出产物？（移入回收站，7 天内可找回）'))
+      delRecord('/api/artifacts/delete', delAf.dataset.delAf, loadArtifacts);
+    return;
+  }
   const pp = e.target.closest('button[data-open]');
   if (pp) { e.preventDefault(); e.stopPropagation(); openInPowerpoint(pp.dataset.open); return; }
   const deck = e.target.closest('button[data-deck]');
@@ -1530,6 +1560,7 @@ async function loadProjects() {
       `<button class="side-item" data-project="${esc(p.name)}" title="${esc(p.title)}">
          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
          <span class="txt">${esc(p.title)}</span><span class="meta">${esc(p.when)}</span>
+         <span class="tpl-del" data-del-project="${esc(p.name)}" title="删除此历史项目（移入回收站）">×</span>
        </button>`).join('');
   } catch (e) { /* 历史列表失败不影响主流程 */ }
 }
@@ -1706,6 +1737,35 @@ loadArtifacts();
 loadTemplates();
 loadModels();   // 顶栏模型快捷栏 + 侧栏面板首次渲染
 bindSelectionCapture();
+// ===== 删除功能（记录 / 产物 / pptx 导入记录）：统一移入回收站 =====
+async function delRecord(url, name, reload) {
+  const {ok, data} = await post(url, {name});
+  if (!ok) { toast(data.error); return; }
+  toast('已删除（移入回收站，7 天内可找回）', 3500);
+  if (reload) reload();
+}
+
+async function delDeckBundle(name) {
+  const {ok, data} = await post('/api/decks/delete', {name});
+  if (!ok) { toast(data.error); return; }
+  toast(`已删除设计稿及 ${data.removed.length} 项关联产物（移入回收站）`, 4000);
+  loadDecks(); loadArtifacts();
+}
+
+// pptx 导入记录删除（pptx-status 内的链接，独立委托）
+$('pptx-status').addEventListener('click', e => {
+  const del = e.target.closest('[data-del-pptx]');
+  if (!del) return;
+  e.preventDefault();
+  if (confirm('删除这次 pptx 导入的上传原稿与产物？（移入回收站，7 天内可找回）')) {
+    post('/api/pptx/delete', {name: del.dataset.delPptx}).then(({ok, data}) => {
+      if (!ok) { toast(data.error); return; }
+      $('pptx-status').hidden = true;
+      toast('已删除 pptx 导入记录（移入回收站）', 3500);
+    });
+  }
+});
+
 // Ctrl/⌘+J 呼出或收起 AI 协作面板
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); toggleAi(); }

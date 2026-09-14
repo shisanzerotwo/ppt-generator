@@ -1,5 +1,6 @@
 """可视化制作 Web 界面后端：python app.py 后浏览器打开 http://127.0.0.1:5000"""
 
+import glob
 import hashlib
 import json
 import os
@@ -40,6 +41,9 @@ ANIMATION_DIR = os.path.join(OUTPUT_DIR, "animation")
 VIDEOS_DIR = os.path.join(OUTPUT_DIR, "videos")
 PPTX_SRC_DIR = os.path.join(OUTPUT_DIR, "pptx_src")   # pptx 导入产物根（工作台入口）
 THUMBNAILS_DIR = os.path.join(OUTPUT_DIR, "thumbnails")  # 设计稿逐页缩略图（可视化编辑预览）
+TRASH_DIR = os.path.join(OUTPUT_DIR, "trash")  # 回收站：删除先移入这里，保留 7 天可找回
+# （目录名不用 .trash：实测 Python 3.11 pathlib 的 rglob 对点开头目录遍历不可靠）
+TRASH_KEEP_DAYS = 7
 # 上传的原始稿放在**被服务目录之外**，避免 /pptx/<path> 把用户原稿也一起暴露
 PPTX_UPLOAD_DIR = os.path.join(OUTPUT_DIR, "pptx_uploads")
 _video_jobs = set()  # 正在合成视频的稿名（防同稿并发叠加 worker，功能测试缺陷-2）
@@ -81,6 +85,67 @@ resume_event = threading.Event()   # 分步确认的放行信号
 def _log(msg: str):
     with lock:
         state["log"].append({"time": time.strftime("%H:%M:%S"), "msg": msg})
+
+
+# ---------------- 回收站删除基建 ----------------
+# 删除一律先移入 output/.trash/<分类>/，保留 7 天可手动找回；移入时惰性清理过期项。
+
+def _trash_cleanup_expired():
+    if not os.path.isdir(TRASH_DIR):
+        return
+    cutoff = time.time() - TRASH_KEEP_DAYS * 86400
+    for category in os.listdir(TRASH_DIR):
+        cat_dir = os.path.join(TRASH_DIR, category)
+        if not os.path.isdir(cat_dir):
+            continue
+        for entry in os.listdir(cat_dir):
+            p = os.path.join(cat_dir, entry)
+            try:
+                if os.path.getmtime(p) < cutoff:
+                    if os.path.isdir(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                    else:
+                        os.remove(p)
+            except OSError:
+                pass
+        if not os.listdir(cat_dir):
+            try:
+                os.rmdir(cat_dir)
+            except OSError:
+                pass
+
+
+def _move_to_trash(path: str, category: str) -> str:
+    """把文件/目录移入回收站，返回回收站路径。目录不存在或已消失时抛 OSError。"""
+    os.makedirs(TRASH_DIR, exist_ok=True)
+    _trash_cleanup_expired()
+    dest = os.path.join(TRASH_DIR, category,
+                        f"{time.strftime('%Y%m%d_%H%M%S')}_{os.path.basename(path.rstrip(chr(92) + '/'))}")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.move(path, dest)
+    return dest
+
+
+def _delete_deck_bundle(name: str) -> list:
+    """删除历史设计稿及其全部伴生产物（缩略图/教学动画/视频/同源导出文件），移入回收站。"""
+    local = os.path.join(DECKS_DIR, name)
+    stem = os.path.splitext(name)[0]
+    moved = []
+    _move_to_trash(local, "decks")
+    moved.append(name)
+    for sub in (THUMBNAILS_DIR, ANIMATION_DIR):
+        d = os.path.join(sub, stem)
+        if os.path.isdir(d):
+            _move_to_trash(d, f"decks_{os.path.basename(sub)}")
+            moved.append(f"{stem}（{os.path.basename(sub)}）")
+    for f in glob.glob(os.path.join(VIDEOS_DIR, glob.escape(stem) + "_*.mp4")):
+        _move_to_trash(f, "videos")
+        moved.append(os.path.basename(f))
+    for f in glob.glob(os.path.join(OUTPUT_DIR, glob.escape(stem) + ".*")):
+        if os.path.isfile(f) and f.lower().endswith((".pptx", ".pdf", ".txt")):
+            _move_to_trash(f, "exports")
+            moved.append(os.path.basename(f))
+    return moved
 
 
 def _phase(p: str):
@@ -1594,6 +1659,83 @@ def api_open_in_powerpoint():
     return jsonify({"ok": True})
 
 
+@app.route("/api/decks/delete", methods=["POST"])
+def api_decks_delete():
+    """删除历史设计稿：html + 联动产物（缩略图/教学动画/视频/同源导出文件）一并移入回收站。"""
+    data = request.get_json(force=True) if request.data else {}
+    name = os.path.basename(str(data.get("name") or ""))
+    if not name.lower().endswith(".html"):
+        return jsonify({"error": "只支持删除 .html 设计稿"}), 400
+    if not os.path.isfile(os.path.join(DECKS_DIR, name)):
+        return jsonify({"error": "设计稿不存在"}), 404
+    with lock:
+        current = state.get("html_path")
+    if current and os.path.basename(unquote(current)) == name:
+        return jsonify({"error": "该设计稿正在工作台中，请先生成或载入其它项目再删除"}), 409
+    moved = _delete_deck_bundle(name)
+    _log(f"已删除设计稿（移入回收站，7 天内可找回）：{name}（含 {len(moved)} 项关联产物）")
+    return jsonify({"ok": True, "removed": moved})
+
+
+@app.route("/api/projects/delete", methods=["POST"])
+def api_projects_delete():
+    """删除历史项目记录（.json 快照），移入回收站。设计稿文件不受影响。"""
+    data = request.get_json(force=True) if request.data else {}
+    name = os.path.basename(str(data.get("name") or ""))
+    if not name.endswith(".json"):
+        return jsonify({"error": "只支持删除 .json 项目记录"}), 400
+    full = os.path.join(PROJECTS_DIR, name)
+    if not os.path.isfile(full):
+        return jsonify({"error": "项目记录不存在"}), 404
+    _move_to_trash(full, "projects")
+    _log(f"已删除历史项目（移入回收站）：{name}")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/artifacts/delete", methods=["POST"])
+def api_artifacts_delete():
+    """删除导出产物（output 根的 pptx/pdf/txt 或 videos 的 mp4），移入回收站。"""
+    data = request.get_json(force=True) if request.data else {}
+    name = os.path.basename(str(data.get("name") or ""))
+    if name.lower().endswith(ARTIFACT_EXT):
+        full = os.path.join(OUTPUT_DIR, name)
+    elif name.lower().endswith(".mp4"):
+        full = os.path.join(VIDEOS_DIR, name)
+    else:
+        return jsonify({"error": "该类型不支持删除"}), 400
+    if not os.path.isfile(full):
+        return jsonify({"error": "文件不存在"}), 404
+    _move_to_trash(full, "artifacts")
+    _log(f"已删除产物（移入回收站）：{name}")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pptx/delete", methods=["POST"])
+def api_pptx_delete():
+    """删除一次 pptx 导入记录：上传原稿 + 导入产物目录，一并移入回收站。"""
+    data = request.get_json(force=True) if request.data else {}
+    name = os.path.basename(str(data.get("name") or "")).strip()
+    if not name:
+        return jsonify({"error": "缺少稿名"}), 400
+    removed = []
+    src = os.path.join(PPTX_UPLOAD_DIR, f"{name}.src.pptx")
+    if os.path.isfile(src):
+        _move_to_trash(src, "pptx_uploads")
+        removed.append(name + ".src.pptx")
+    out_dir = os.path.join(PPTX_SRC_DIR, name)
+    if os.path.isdir(out_dir):
+        _move_to_trash(out_dir, "pptx_src")
+        removed.append(name + "/（导入产物）")
+    if not removed:
+        return jsonify({"error": "未找到该导入记录"}), 404
+    with lock:
+        if state["pptx"].get("name") == name:
+            state["pptx"].update({"status": "idle", "name": None, "player": None,
+                                  "pages": 0, "units": 0, "error": None, "hint": "", "log": []})
+    _log(f"已删除 pptx 导入记录（移入回收站）：{name}")
+    return jsonify({"ok": True})
+
+
 @app.route("/api/artifacts")
 def api_artifacts():
     """列出可打开/下载的产物：output 根下 pptx/pdf/txt + decks 下 html。"""
@@ -1726,6 +1868,7 @@ def api_decks():
         parts = stem.rsplit("_", 2)
         title = parts[0].replace("_", " ") if len(parts) == 3 else stem
         items.append({
+            "name": name,
             "title": title,
             "url": f"/decks/{quote(name)}",
             "mtime": mtime,
