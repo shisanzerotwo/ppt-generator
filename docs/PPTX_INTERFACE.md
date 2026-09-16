@@ -86,7 +86,7 @@
 | 素材形状计数 | `output/b_multislide.pptx` 顶层 **41** = 40 `p:sp` + 1 chart；过滤 18 空文本框后 **23**（22 text + 1 chart） | 裸 XML 独立核实，`docs/TEST_REPORT.md` §6(a) |
 | M2 覆盖率 | 行级中位 **0.286**；矩形法上限 **0.414**；pad 归零 **0.321**；形状级基线 **0.111**；比值 **2.6×** | `docs/IMPL_REPORT.md` D2 / `analyze_m2_ceiling.py`；独立法 0.287 / 0.417 / 0.323 / — / — |
 | 图表单元覆盖率 | **0.166**（全场最低） | `docs/IMPL_REPORT.md` D8；`docs/TEST_REPORT.md` §6 |
-| 回归基线 | commit `c188b63` = **248**；实现步 1–4 后 545；再加独立用例 **960 collected**。`KNOWLEDGE.md:53` 的"244"**已过时** | `docs/AUDIT_REPORT.md` N3 |
+| 回归基线 | commit `c188b63` = **248**；实现步 1–4 后 545；再加独立用例 **960 collected**。旧版 `KNOWLEDGE.md` 的"244"**已过时** | `docs/AUDIT_REPORT.md` N3 |
 
 ---
 
@@ -836,7 +836,7 @@ def fit_text(text: str, size_pt: float, box_width_pt: float, box_height_pt: floa
 
 **回归红线**：
 - `anim.py` / `builder.py` **一字不改**（实测已确认 `git diff c188b63 -- anim.py builder.py` 为空）；`qa.py` 不改签名或行为（只调用）。
-- `tests/` 全绿。**基线口径要说清**：commit `c188b63` = **248** 条（契约所称"248 基线"指此）；实现步 1–4 后 545；再加独立用例共 **960 collected**。`KNOWLEDGE.md:53` 的"244"**已过时**。
+- `tests/` 全绿。**基线口径要说清**：commit `c188b63` = **248** 条（契约所称"248 基线"指此）；实现步 1–4 后 545；再加独立用例共 **960 collected**。旧版 `KNOWLEDGE.md` 的"244"**已过时**。
 - ⚠️ **`output/` 整个在 `.gitignore` 内** → 新克隆上 `needs_pptx_src` / `needs_material` 标记的用例（含 M1/M2 的核心验收）会**静默 skip**，所以"全绿"是本机产物、不是仓库可复现的事实。交接/CI 必须先跑 `tools/probes/accept_m1.py` 生成底图（R-N3）。
 
 ### 11.2 必须先验证再动笔的点（v2 重排）
@@ -1040,7 +1040,7 @@ def fit_text(text: str, size_pt: float, box_width_pt: float, box_height_pt: floa
 ### R-N3 · 测试数字三处不一致 + 素材被 gitignore
 
 - **v1 原文**（§11.1）：「回归红线：每步结束跑 pytest，**248 条保持全绿**，新增用例约 20–25 条。」
-- **审计结论**（`docs/AUDIT_REPORT.md` N3）：`KNOWLEDGE.md:53` 写"当前 **244** 条"（**已过时**）；`IMPL_REPORT` 报 545 passed，实际 `--collect-only` 是 **960 collected**。更关键：`output/` **整个在 `.gitignore` 内**（`git ls-files output/` 为空）→ **新克隆上** `needs_pptx_src` / `needs_material` 标记的用例**全部静默 skip**，其中就包括 M1 的两条核心验收与 M2 的两条验收 → "545 全绿"是**本机产物**，不是仓库可复现的事实。
+- **审计结论**（`docs/AUDIT_REPORT.md` N3）：旧版 `KNOWLEDGE.md` 写"当前 **244** 条"（**已过时**）；`IMPL_REPORT` 报 545 passed，实际 `--collect-only` 是 **960 collected**。更关键：`output/` **整个在 `.gitignore` 内**（`git ls-files output/` 为空）→ **新克隆上** `needs_pptx_src` / `needs_material` 标记的用例**全部静默 skip**，其中就包括 M1 的两条核心验收与 M2 的两条验收 → "545 全绿"是**本机产物**，不是仓库可复现的事实。
 - **v2 修正**（§11.1）：把口径写清——**248 指 commit `c188b63` 的基线**；实现步 1–4 后 545；再加独立用例共 960。并新增交接纪律：「**交接/CI 必须先跑 `tools/probes/accept_m1.py` 生成底图**，否则 M1/M2 的核心验收会被静默 skip」。`KNOWLEDGE.md` 的"244"由后续角色修正（不在本文范围）。
 
 ### R-N4 · `app.py::_export_pdf_via_com` 仍是老写法（**同仓库同威胁**）

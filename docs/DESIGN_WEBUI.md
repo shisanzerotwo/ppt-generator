@@ -10,7 +10,10 @@
 
 **一句话**：奶油纸底上的陶土橙与深咖衬线——一个温暖、亲和、有人文气的创作工坊，而不是冷冰的后台管理系统。受众：本地单机的演示作者；氛围词：手作、纸感、温度。
 
-**与被否方案的关系**：保持浅色（用户在浅色原版上提的"丑"是默认感 teal 后台风，不是浅色本身）；排版结构沿用原版（侧栏 + 顶栏 + hero + 卡片 + 预览），换整套视觉语言。
+**与被否方案的关系**：保持浅色（用户在浅色原版上提的"丑"是默认感 teal 后台风，不是浅色本身）；换整套视觉语言。
+
+**排版结构（2026-09-14 改版后现行）**：`侧栏 + hero + 双栏工作区 + 底部命令岛 + AI 协作抽屉`。原版「页中进度面板」已在 `e0f5602` 改版中挪进**底部固定命令岛**，`97209eb` 把工作区固定为 `1fr:1fr` 等比例双栏（`.workarea.split`：`.col-edit` 编辑卡 / `.col-show` sticky 预览）。
+> 本规格旧版写的"圆点胶囊 stepper"**从未落地**（`index.html` 全历史 `grep stepper` = 0），不要再按它实现；也没有独立的"顶栏"组件。
 
 ## 二、色彩（浅色暖调，对比度按 WCAG 实算）
 
@@ -55,7 +58,9 @@
 | 输入框 | `--surface` 底 + 1px `--border`；focus 陶土边框 |
 | hero | 衬线斜体 eyebrow「AI SLIDE STUDIO」（陶土）→ 衬线大标题 → 说明 → 示例胶囊 |
 | 编辑卡片 | **暖白底**（`--deck-*` 默认值改暖色系；`DECK_THEMES` 三套同步暖色化，保留主题切换机制）——消除原版"浅工作台 + 深蓝卡片"的割裂 |
-| 进度 | 圆点胶囊 stepper + 6px 陶土进度条；done 橄榄绿 |
+| 状态时间线（`.tl-wrap#progress`） | 底部命令岛内 `.stages` 四段（大纲 / 配图 / AI 设计 / 就绪）：active = 陶土虚线圆 + 陶土字，done = 橄榄实心圆，段间连线随 done 变橄榄；下方 `.logline` 当前日志一行 + 可折叠「日志」pop；分步确认时插入 `.review-banner` |
+| 进度条 | `.cmd-island .track` **3px** 陶土条（非 6px），命令岛顶部通栏 |
+| 命令岛（`.cmd-island`） | 风格徐章 + 主题输入 + 篇幅/密度两个 select + 分步确认开关 + 模型按钮 + 生成按钮 |
 | 图标 | lucide 风 SVG line 图标；emoji 全部替换（💾🎞🎬） |
 | 浮层 | 暖白底 + 1px `--border` + 柔和阴影（`0 12px 32px rgba(62,47,36,.14)`） |
 
@@ -73,5 +78,5 @@
 ## 八、验收标准（可验证）
 
 1. 探针截图三态（首屏 / 编辑区 / 模型对话框）与 P4 原型一致；Playwright 加载 **JS 零 pageerror**
-2. 全量 pytest：基线 1066 条中除 3 条**预先存在**的 COM 环境失败（`pptx_io.py` tasklist GBK 解码，已 stash 对照实证与前端无关）外全部通过；前端锚点（`test_index_has_pptx_entry` / `test_index_js_runs_without_errors` / `test_wiring.py`）全过
+2. 全量 pytest：当前 **1089 条**全过（`--basetemp` 指到仓库外的临时目录）；前端锚点（`test_index_has_pptx_entry` / `test_index_js_runs_without_errors` / `test_wiring.py`）全过
 3. 红线不动：`sandbox="allow-scripts"`、`escUrl` 白名单、全部功能锚点 id / 事件 / JS 逻辑（`DECK_THEMES` 常量数据暖色化除外，逻辑不变）

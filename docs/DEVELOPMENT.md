@@ -34,7 +34,7 @@ HTTP 路由        53 条
 ```
 [L1 接入层]
   app.py (1884)          Flask + 53 路由 + 状态机 + 三套导出接线
-  templates/index.html   工作台前端（单文件：步骤条/两栏/预览/日志）
+  templates/index.html   工作台前端（单文件：侧栏 + hero + 双栏工作区 + 底部命令岛/状态时间线）
   cli.py (433)           pptgen CLI —— agent 入口（方向 B）
   main.py                旧 CLI（仅 大纲→生图→builder pptx，保留未废弃）
 
@@ -281,6 +281,7 @@ monkeypatch.setitem(sys.modules, "win32com.client", fake_client)
 | 明明没在用 PowerPoint，进程却是 1 个 | `Dispatch`/`DispatchEx` 在本机是**同一个实例** | 安全只能靠守卫，见 §8 |
 | pytest 跑很久没反应 | 子进程没起来（如 venv trampoline 坏了） | 看 **CPU 时间**而非墙钟；`sys.prefix` 是否等于 venv 目录是个好指标 |
 | 高亮块圈住一大片空白 | 用了**文本框矩形**而非行级矩形 | 用 `hl_layout.build_units`（行级 tight），别直接用 `shape.left/top/w/h` |
+| pytest 输出里混着 "Windows fatal exception" 栈回溯 | 释放 PowerPoint COM 代理时 PowerPoint 主动断开，触发一次 `RPC_E_DISCONNECTED(0x80010108)`；pytest 默认开 faulthandler，就把它打到 stderr | **良性噪声**（实测三种释放顺序都会出现，且从不外泄成 Python 异常），exit code 仍为 0、用例全过；别为此加 `-p no:faulthandler`——会连带丢掉真崩溃时的栈 |
 
 ---
 
@@ -322,7 +323,7 @@ monkeypatch.setitem(sys.modules, "win32com.client", fake_client)
 > 而在项目内传 `--basetemp=.pytest_tmp` 会在仓库根留下一堆未跟踪目录、污染 `git status`。
 
 - **本机有多个 python / 多个 uv**：venv 的 trampoline 依赖 uv 的 python 目录命名，**uv 升级可能导致 venv 整体失效**（症状：`uv trampoline failed to spawn Python child`）。正确修法是用当前版 uv `venv --python 3.11 --allow-existing .venv` 重建 trampoline（实测：改 `pyvenv.cfg` 无效、建 junction 会让 `sys.prefix` 错位）
-- **本机 bash 是 WSL**：路径用 `/mnt/d/...`；调 Windows 侧 CLI 走 `powershell.exe`
+- **本机有两个 bash，别假设是哪一个**：pi 的终端跑 **WSL**（路径 `/mnt/d/...`），Herdr pane 里跑 **MINGW64 Git Bash**（路径 `/d/...` 可用、`/mnt/d` 不存在）。先 `uname -a` 或 `ls -d /mnt/d /d` 自判，不要写死其中一种；调 Windows 侧 CLI（含 `powershell.exe`）两边都可
 - **WSL 连不上 `github.com:443`**：推送/拉取必须走 Windows 侧 git
 - LLM 配置在 `runtime_config.json`（多渠道，**key 不落仓库**）或 `.env`；`images:false` 一键关配图
 

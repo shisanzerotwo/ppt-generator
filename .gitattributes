@@ -14,3 +14,7 @@
 *.ttf   binary
 *.woff  binary
 *.woff2 binary
+
+# Windows 批处理固定 CRLF：cmd.exe 对 LF 下的 goto/标签解析有坑
+*.cmd   text eol=crlf
+*.bat   text eol=crlf

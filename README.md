@@ -144,7 +144,7 @@ pptgen deck    "人工智能如何改变教育" --out out/    # 可选：复用 
 | `cli.py` | `pptgen` CLI：`import / animate / video / export / deck` |
 | `skill/ppt-anim/` | 给 agent 用的 skill（SKILL.md + 薄封装），逻辑全在 `cli.py` |
 | `app.py` | Flask 后端 + Web 工作台（异步生成、状态机、导出接口、pptx 高亮入口） |
-| `templates/index.html` | 前端：步骤条、AI 设计稿 iframe 预览、重新设计、对话修改 |
+| `templates/index.html` | 前端：双栏工作区（编辑卡 + 等比例预览）、底部命令岛与状态时间线、AI 设计稿 iframe 预览、重新设计、对话修改 |
 
 ## 🔌 API 一览
 
