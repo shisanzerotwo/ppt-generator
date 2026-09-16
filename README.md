@@ -8,7 +8,7 @@ AI 驱动的 PPT 生成器：输入主题，自动完成「大纲 → 生图 →
 |---|---|---|
 | [**使用说明**](docs/USER_GUIDE.md) | 使用者 | 两条产线怎么用 / 工作台操作 / CLI 完整参考 / 故障排查 FAQ / 性能实测 |
 | [**开发文档**](docs/DEVELOPMENT.md) | 开发者 | 代码地图 / 数据流 / 核心约定（单位制·状态机·错误语义）/ 如何扩展 / 测试策略 / 调试手法 / 红线 |
-| [KNOWLEDGE.md](KNOWLEDGE.md) | agent | 执行手册：符号锚点 / 状态机 / 45 条路由 / 已知风险表 |
+| [KNOWLEDGE.md](KNOWLEDGE.md) | agent | 执行手册：符号锚点 / 状态机 / 53 条路由 / 已知风险表 |
 | [docs/PPTX_INTERFACE.md](docs/PPTX_INTERFACE.md) | 开发者 | pptx 链路接口契约 v2（含被实测推翻的 16 条前提与追溯） |
 | [docs/FIX_REPORT.md](docs/FIX_REPORT.md) · [AUDIT_REPORT](docs/AUDIT_REPORT.md) · [TEST_REPORT](docs/TEST_REPORT.md) | 维护者 | 9 项遗留风险的修复记录（四段式） / 只读审计 / 独立测试（交叉验证） |
 | [PLAN_PPTX_ANIM.md](PLAN_PPTX_ANIM.md) · [PLAN_RISK_FIX.md](PLAN_RISK_FIX.md) | 维护者 | 两轮开发的计划与执行记录（含 spike 实测数据） |
@@ -18,7 +18,8 @@ AI 驱动的 PPT 生成器：输入主题，自动完成「大纲 → 生图 →
 - **LLM 自主设计 HTML**：直接把大纲 + 图片交给 LLM 生成完整单文件 HTML 幻灯片，每页布局因内容而异，纯内联 CSS + SVG，零外部依赖，可离线打开、可打印 PDF
 - **AI 智能选风格 + 模板导入**：默认 AI 根据主题从 6 套风格库自选（深空科技 / 极简商务 / 清新浅色 / 暖调人文 / 活力渐变 / 自然墨绿）；也可**手动选内置模板**（色板 + 版式骨架）或**导入参考稿**（上传设计图/HTML，AI 识别其配色与风格气质仿制），用户指定后跨生成保留、可清除
 - **左右分栏工作区**：出结果后左编辑（对话/卡片/排序）、右放映（设计稿常驻预览），改一处右侧实时看，不必上下滚动；窄屏自动回退单栏
-- **完整的生成流水线**：大纲（章节化、8~10 页）→ 逐页生图 → 视觉校验（提议者-审核者闭环，不契合自动改词重生）→ LLM 设计 HTML
+- **完整的生成流水线**：大纲（章节化，页数可选）→ 逐页生图 → 视觉校验（提议者-审核者闭环，不契合自动改词重生）→ LLM 设计 HTML
+- **篇幅与详实度可选**：生成前选篇幅档位（标准 8~10 页 / 加长 12~15 页 / 深入 16~20 页）与内容密度（简略 / 均衡 / 详实）；两者都进大纲缓存键，换档即重出大纲，不会拿到旧档缓存
 - **对话式修改（含定点）**：ready 后可整篇改（“整篇换商务风”），也可在右侧「AI 协作」面板圈选某页/某条要点定点改——只动被圈定的部分，其余页连配图一并保留，不打回重做
 - **内嵌查看器 / 放映 / 灯箱**：历史设计稿在工作台内的居中弹窗查看（ESC 或点遮罩关闭），一键全屏放映（方向键翻页）；卡片配图点击放大看清生图质量
 - **分步确认（human-in-the-loop）**：可选开启，生成在“大纲与风格”“配图”两个节点暂停，审阅横幅上「继续」放行或「先改改」先调整
@@ -147,39 +148,100 @@ pptgen deck    "人工智能如何改变教育" --out out/    # 可选：复用 
 
 ## 🔌 API 一览
 
+> 完整清单（52 条 API/静态路由；另有首页 `GET /`）。`KNOWLEDGE.md` 的「路由（完整清单）」是同一份事实的 agent 版，
+> 增删路由请两处同步 —— `tools/kb_drift_check.py` 会逐条核对。
+
+**生成 / 状态 / 分步**
+
 | 接口 | 说明 |
 |---|---|
-| `POST /api/generate` | 按主题生成 |
-| `POST /api/import` / `api/import_file` | 从文档文本/文件生成 |
-| `POST /api/refine` | 对话式修改：不带 `target` 改整篇；带 `target: {slide, quote?}` 只改指定页/要点（定点修改，不重跑整篇） |
-| `POST /api/redesign` | 重新触发 AI 设计（重生成 HTML） |
+| `POST /api/generate` | 按主题生成（可带 `length`: `standard`/`extended`/`deep`、`density`: `sparse`/`balanced`/`dense`） |
+| `POST /api/import` · `POST /api/import_file` | 从文档文本 / 文件（pdf/docx/md/txt）生成 |
 | `GET /api/status` | 轮询状态（phase / await_step / stepwise / slides / html_path / style_name / tpl_style_name / brand / log） |
+| `GET /api/quality` | deck 级质检报告（重复页 / 过瘦页） |
+| `POST /api/stepwise` | 开关分步确认（`{enabled}`） |
+| `POST /api/continue` | 分步确认放行（仅 `review` 态有效，否则 409） |
+
+**页面编辑**
+
+| 接口 | 说明 |
+|---|---|
 | `POST /api/slide/<i>/text` | 保存单页标题与要点 |
 | `POST /api/slide/<i>/image` | 单页重新生图（可带自定义画面描述） |
-| `POST /api/slide/reorder` | 页面重排序（body 传 `order`：0..n-1 的完整排列；前端提供上移/下移按钮） |
+| `POST /api/slide/<i>/layout` | 切换该页版式（7 种白名单，导出与 AI 设计共同遵循） |
 | `POST /api/slide/add` | 在 `after` 下标后插入一页空白 content 页 |
-| `DELETE /api/slide/<i>` | 删除某页（至少保留一页，删至最后一页时返回 400） |
-| `POST /api/brand` | 设置/清除品牌模板（名称 + 主色 `#RRGGBB`；用户级偏好跨生成保留，传空清除） |
+| `POST /api/slide/reorder` | 页面重排序（body 传 `order`：0..n-1 的完整排列） |
+| `DELETE /api/slide/<i>/delete` | 删除某页（至少保留一页，删至最后一页时返回 400） |
+| `POST /api/refine` | 对话式修改：不带 `target` 改整篇；带 `target: {slide, quote?}` 只改指定页/要点（定点修改，不重跑整篇） |
+| `POST /api/redesign` | 重新触发 AI 设计（重生成 HTML） |
+
+**风格 / 模板 / 品牌**
+
+| 接口 | 说明 |
+|---|---|
 | `GET /api/templates` | 列出内置模板（6 套色板 + 版式骨架） |
 | `POST /api/template/select` | 选内置模板（`{key}`，传空清除回 AI 自动选） |
 | `POST /api/template/analyze` | 上传参考稿（图片 multipart 或 `{html}`）→ AI 识别风格存为模板 |
-| `POST /api/stepwise` | 开关分步确认（`{enabled}`） |
-| `POST /api/continue` | 分步确认放行（仅 `review` 态有效，否则 409） |
-| `GET /api/projects` | 历史项目库列表（ready 时自动快照，上限 30） |
-| `POST /api/projects/load` | 载入历史项目快照继续编辑/重设计 |
-| `GET /api/decks` | 历史设计稿列表（按修改时间倒序，上限 30，含标题/链接/时间） |
+| `POST /api/templates/save` | 保存自定义模板 |
+| `POST /api/templates/delete` | 删除自定义模板 |
+| `POST /api/brand` | 设置/清除品牌模板（名称 + 主色 `#RRGGBB`；用户级偏好跨生成保留，传空清除） |
+| `POST /api/theme` | 切换设计稿主题色 |
+
+**模型 / 渠道**
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/models` · `POST /api/models` | 读取 / 写入各用途（chat/design/vision/image）的模型选择 |
+| `POST /api/channels` | 新增或更新 LLM 渠道（key 存 `runtime_config.json`，不入库） |
+| `POST /api/channels/select` | 选中渠道 |
+| `POST /api/channels/models` | 拉取该渠道的可用模型列表 |
+| `POST /api/channels/delete` | 删除渠道 |
+
+**导出与产物**
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/export` · `POST /api/export_pdf` · `POST /api/export_html` · `POST /api/export_txt` | 多格式导出（pptx / PDF / 单文件 HTML / 大纲 txt） |
+| `POST /api/export_animation` | 导出逐元素揭示动画播放器 |
+| `POST /api/export_video` | 导出 MP4（ffmpeg 合成） |
+| `POST /api/thumbnails` | 生成逐页缩略图 |
+| `POST /api/open_in_powerpoint` | 用本机 PowerPoint 打开该 pptx（`os.startfile` 走文件关联，零 COM） |
 | `GET /api/artifacts` | 导出产物列表（pptx/pdf/大纲 txt + 设计稿 html，倒序上限 30） |
-| `POST /api/export` `/export_pdf` `/export_html` `/export_txt` | 多格式导出 |
-| `POST /api/pptx/import` | **上传 .pptx → 后台导入 → 高亮播放器**（进度见 `/api/status` 的 `pptx` 字段） |
-| `GET /pptx/<file>` | 访问 pptx 导入产物（播放器 + `bg/*.png`） |
-| `GET /decks/<file>` | 访问 AI 设计稿 HTML |
 | `GET /files/<file>` | 下载导出产物（仅 pptx/pdf/txt） |
 | `GET /images/<file>` | 访问生成的配图 |
+| `GET /videos/<file>` | 访问导出的 MP4 |
+| `GET /animation/<file>` | 访问动画播放器资源 |
+| `GET /thumbnails/<file>` | 访问缩略图 |
+
+**历史记录**
+
+| 接口 | 说明 |
+|---|---|
+| `GET /api/decks` | 历史设计稿列表（按修改时间倒序，上限 30，含标题/链接/时间/name） |
+| `GET /api/projects` | 历史项目库列表（ready 时自动快照，上限 30） |
+| `POST /api/projects/load` | 载入历史项目快照继续编辑/重设计 |
+| `GET /decks/<file>` | 访问 AI 设计稿 HTML |
+
+**删除（一律移入 `output/trash/`，保留 7 天可找回）**
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/decks/delete` | 删除历史设计稿 + **联动产物**（缩略图/教学动画/同名前缀视频/同源导出 pptx·pdf·txt）；工作台打开中的稿返 409 |
+| `POST /api/projects/delete` | 删除一条历史项目记录（.json），设计稿文件不受影响 |
+| `POST /api/artifacts/delete` | 删除一个导出产物（pptx/pdf/txt/mp4） |
+| `POST /api/pptx/delete` | 删除一次 pptx 导入记录（上传原稿 + 导入产物目录） |
+
+**pptx 高亮链路**
+
+| 接口 | 说明 |
+|---|---|
+| `POST /api/pptx/import` | **上传 .pptx → 后台导入 → 高亮播放器**（进度见 `/api/status` 的 `pptx` 字段） |
+| `GET /pptx/<file>` | 访问 pptx 导入产物（播放器 + `bg/*.png`） |
 
 ## 🧪 测试
 
 ```bash
-pytest -q          # 1028 条单测
+pytest -q          # 1089 条单测
 ```
 
 测试通过 mock 截获 LLM 调用，覆盖：大纲解析、风格判定与回退、HTML 提取/重试、路径编码（防 XSS）、builder 版式等。

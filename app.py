@@ -88,7 +88,7 @@ def _log(msg: str):
 
 
 # ---------------- 回收站删除基建 ----------------
-# 删除一律先移入 output/.trash/<分类>/，保留 7 天可手动找回；移入时惰性清理过期项。
+# 删除一律先移入 output/trash/<分类>/，保留 7 天可手动找回；移入时惰性清理过期项。
 
 def _trash_cleanup_expired():
     if not os.path.isdir(TRASH_DIR):

@@ -1,0 +1,16 @@
+# 行尾符统一为 LF（仓库内 + 工作区）。
+# 起因：Windows 编辑器把个别文件写成 CRLF 后，会产生「整文件假 diff」（145 增 / 145 删，内容零差异），
+# 掩盖真实改动、污染 blame。加此文件后由 git 统一管理，别再手工转行尾。
+* text=auto eol=lf
+
+# 明确二进制，避免 git 对其做行尾/编码转换
+*.pptx  binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.mp4   binary
+*.ttf   binary
+*.woff  binary
+*.woff2 binary

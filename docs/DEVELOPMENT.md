@@ -14,12 +14,12 @@
 | **A · 从主题生成** | 一句话主题 / 文档 | LLM 自主设计单文件 HTML（非模板填充） | HTML 设计稿 → pptx / PDF / 动画播放器 / MP4 |
 | **B · 从 pptx 导入** | 现成 `.pptx` | PowerPoint COM 导保真底图 + python-pptx 取几何 → **行级高亮**锚点 | 高亮讲解播放器 → MP4；反向可导回**可编辑** pptx |
 
-**代码规模**（2026-09-13 核实）：
+**代码规模**（2026-09-16 核实，可用 `wc -l` 复核）：
 
 ```
-python 模块      7038 行 / 12 个
-前端             1594 行（templates/index.html，单文件工作台）
-测试             37 个文件 / 1066 条用例
+python 模块      7311 行 / 22 个（仓库根 *.py）
+前端             1781 行（templates/index.html，单文件工作台）
+测试             38 个文件 / 1089 条用例
 HTTP 路由        53 条
 ```
 
@@ -33,7 +33,7 @@ HTTP 路由        53 条
 
 ```
 [L1 接入层]
-  app.py (1700)          Flask + 53 路由 + 状态机 + 三套导出接线
+  app.py (1884)          Flask + 53 路由 + 状态机 + 三套导出接线
   templates/index.html   工作台前端（单文件：步骤条/两栏/预览/日志）
   cli.py (433)           pptgen CLI —— agent 入口（方向 B）
   main.py                旧 CLI（仅 大纲→生图→builder pptx，保留未废弃）
@@ -42,7 +42,7 @@ HTTP 路由        53 条
                             / _design_and_save / _pause_gate / _video_jobs
 
 [L3 能力层]  与 Web 解耦，纯函数为主 —— 可被 CLI 与 app 同时复用
-  内容生成   outline.py (233)   主题/文档 → 章节化大纲 JSON（自评迭代 + 布局多样化）
+  内容生成   outline.py (247)   主题/文档 → 章节化大纲 JSON（自评迭代 + 布局多样化 + 篇幅/密度档位）
              style.py           6 套风格库 + AI 选题风格
              template.py (223)  内置模板 + 参考稿识别 + 自定义模板持久化
              critic.py          视觉校验 + 定点/整篇修改
@@ -52,8 +52,8 @@ HTTP 路由        53 条
   渲染导出   shot.py            设计稿截图（Playwright + 三重确定化）
              anim.py            逐元素揭示播放器（服务产线 A）
              hl_anim.py (477)   高亮讲解播放器（服务产线 B）
-             video.py (120)     ffmpeg 配方层（zoompan + xfade → MP4）
-  pptx 专用  pptx_io.py (813)   读形状（python-pptx）+ COM 导保真底图
+             video.py (122)     ffmpeg 配方层（zoompan + xfade → MP4）
+  pptx 专用  pptx_io.py (816)   读形状（python-pptx）+ COM 导保真底图
              hl_layout.py (547) **行级**高亮矩形（复用 qa.py 字体度量）
   质检       qa.py (301)        pptx 几何门禁（FontTools 量文本溢出/越界）
              quality.py         deck 级重复页 / 过瘦页检测
@@ -81,6 +81,9 @@ HTTP 路由        53 条
 | `qa.py` | pptx 几何门禁 + **字体度量底座** | `check_pptx` `_measure_lines_ex` `_char_width_pt` `_is_hard_break` |
 | `llm_util.py` | 多渠道/模型运行时 | `llm_client` `get_model` `add_channel` `images_enabled` |
 | `cli.py` | agent 入口 | `main`（5 子命令） |
+| `report.py` | 生成可视化测试报告（HTML） | `_slide_card` `_step_badge` |
+| `quality.py` | deck 级质检（重复页 / 过瘦页） | `check_deck` |
+| `uploads.py` | PDF/DOCX/MD/TXT → 纯文本 | `parse_pdf` `PDFEncryptionError` |
 
 ---
 
@@ -103,6 +106,11 @@ POST /api/generate
 ```
 
 前端每秒轮询 `GET /api/status` 取 `phase / await_step / slides / html_path / log`。
+
+**篇幅与密度档位**（`length` / `density`）：两个入参只改**提示词参数**，不在这条流水线上产生分支——
+`outline.PAGE_HINTS`（`standard` 8~10 页 / `extended` 12~15 / `deep` 16~20）控制总页数，
+`outline.DENSITY_HINTS`（`sparse` / `balanced` / `dense`）控制每页要点条数与描述字数。
+两者都进**大纲缓存键**（`_outline_cache_path`），故换档必然重出大纲；非法值在三条入口路由返 400。
 
 ### 产线 B · 从 pptx 导入（独立于状态机，单开线程）
 
@@ -155,10 +163,12 @@ output/
 ├── animation/      截图序列 + 逐元素播放器
 ├── videos/         MP4
 ├── templates/      JSON 风格模板（template.py）；pptx 母版在 templates/pptx/
-└── pptx_src/       pptx 导入产物：deck.json + bg/ + units.json + player/
+├── pptx_src/       pptx 导入产物：deck.json + bg/ + units.json + player/
+└── trash/          回收站（删除先移入这里，保留 7 天；见 §4.5）
 ```
 
 > `output/` 整体在 `.gitignore` 内 —— 新克隆的仓库里没有验收素材，`tests/test_pptx_io.py` 等的真机用例会**静默 skip**。要跑全量真机验收，先跑 `tools/probes/accept_m1.py` 生成素材。
+> ⚠️ **`output/spike/` 看着像临时垃圾，其实 `spike/m1/` 是 `tests/test_hl_layout.py` 的素材目录（`needs_material` 的判据），别删**。
 
 ### 4.4 错误语义
 
@@ -167,6 +177,25 @@ CLI 与 `PptxError` 共用错误码表（见 `docs/PPTX_INTERFACE.md` §9）。�
 - **失败一律给明确中文 + 修复指引**，不抛裸堆栈
 - 错误码要能区分「用户稿有问题」与「我们的 bug」：例如缺 `p:sldSz` 应报 `PPTX_UNREADABLE(3)` 而非 `INTERNAL(5)`
 - CLI `stdout` **只有一行 JSON**（`{"ok":true,"cmd":...,"data":{...}}`），人读信息走 `stderr` —— 便于 agent 解析
+
+### 4.5 删除与回收站
+
+任何删除**一律不真删** —— 先 `shutil.move` 进 `TRASH_DIR`（`output/trash/<分类>/<时间戳>_<原名>`），
+保留 `TRASH_KEEP_DAYS`（7）天，由 `_trash_cleanup_expired` 在**每次删除时惰性清理**过期项。
+不做定时任务，也不提供「清空回收站」入口：用户直接去文件管理器找回/清理即可。
+
+| 符号 | 职责 |
+|---|---|
+| `_move_to_trash(path, category)` | 单文件/目录入回收站；顺手跑一次过期清理 |
+| `_delete_deck_bundle(name)` | 设计稿**联动删除**：缩略图目录 / 教学动画目录 / 同名前缀视频 / 同源导出 pptx·pdf·txt，各成回收站子目录 |
+
+加删除类路由时的三条硬要求（四条现有路由都遵守）：
+
+1. 入参 `os.path.basename()` 化 —— 防目录穿越；
+2. 扩展名白名单 + `os.path.isfile/isdir` 存在性校验，不存在返 404；
+3. 删**正在使用**的资源要加闸门 —— `/api/decks/delete` 会比对 `state["html_path"]`，命中即 409。
+
+> **目录名不用 `.trash`**：实测 Python 3.11 `pathlib.rglob` 对点开头目录遍历不可靠（老实现遗留的 `output/.trash` 已清理）。
 
 ---
 
@@ -201,7 +230,7 @@ def api_xxx():
 ## 六、测试策略
 
 ```
-tests/                37 个文件 / 1066 条
+tests/                38 个文件 / 1089 条
 tests/conftest.py     autouse 夹具把 runtime_config.json 隔离到临时目录
                       → 用例不受本地渠道/配图开关影响（**别删这个夹具**）
 ```
@@ -288,6 +317,9 @@ monkeypatch.setitem(sys.modules, "win32com.client", fake_client)
 .venv/Scripts/python.exe -m pytest tests/ -q          # 全量回归（约 3 分钟）
 .venv/Scripts/python.exe -m pytest tests/test_cli.py -q  # 单文件
 ```
+
+> 跑测试请用**临时 basetemp**（如 `--basetemp=%TEMP%/pptgen_pytest`）：系统默认 tmp 在本机会报 `WinError 5`，
+> 而在项目内传 `--basetemp=.pytest_tmp` 会在仓库根留下一堆未跟踪目录、污染 `git status`。
 
 - **本机有多个 python / 多个 uv**：venv 的 trampoline 依赖 uv 的 python 目录命名，**uv 升级可能导致 venv 整体失效**（症状：`uv trampoline failed to spawn Python child`）。正确修法是用当前版 uv `venv --python 3.11 --allow-existing .venv` 重建 trampoline（实测：改 `pyvenv.cfg` 无效、建 junction 会让 `sys.prefix` 错位）
 - **本机 bash 是 WSL**：路径用 `/mnt/d/...`；调 Windows 侧 CLI 走 `powershell.exe`

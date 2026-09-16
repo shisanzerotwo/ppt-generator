@@ -2,6 +2,8 @@
 
 > 供 AI agent 当作项目记忆读。规则：**符号锚点**（函数名/路由名），不用行号（代码在变动）。
 > 本文件取代仓库根目录曾出现的同名草稿（那份把安全项写反、模块路径写成 `output/*.py`）。
+> **同步**：本文件与知识库 `D:/ObsidianChanku/ai学习/research/AI Agent学习/PPT制作台/KNOWLEDGE.md` 应为**同一内容**；
+> `tools/kb_drift_check.py` 核对的是**知识库那一份**，所以改完这里请一并同步过去（否则每周漂移报告会红）。
 
 ## 模块（均位于**项目根**，非 output/）
 | 模块 | 职责 | 关键符号 |
@@ -21,29 +23,44 @@
 | hl_anim.py | **高亮**播放器（与 anim.py 的逐元素揭示并存，勿混用）+ 步进截图 | `build_player` `shot_player` |
 | pptx_out.py | deck.json → **可编辑** pptx（母版 + 占位符，与 builder.py 并存） | `read_template` `build_builtin_master` `build_deck_pptx` `fit_text` |
 | cli.py | `pptgen` CLI（方向 B 的入口）：import/animate/video/export/deck | `main` |
-| qa.py / quality.py / uploads.py / main.py | 质检 / 文档导入 / CLI | — |
+| qa.py / quality.py / uploads.py / report.py / main.py | 质检 / 文档导入 / 可视化测试报告 / 旧 CLI | — |
 | skill/ppt-anim/ | 给 agent 用的 skill（SKILL.md + 薄封装 scripts/pptgen.py） | 逻辑全在 `cli.py`，不复制 |
 
 ## 状态机
 `state` 全局 dict + `lock` + worker 线程。`phase`：`idle → outline → images → designing → ready`，分步确认时出现 `review`（`state["await_step"]` 记当前暂停点）。前端每秒轮询 `/api/status`。
 
-## 路由（要点）
-- 生成：`POST /api/generate`、`POST /api/import_file`
-- 状态：`GET /api/status`
+`state` 里另几个与大纲缓存键绑定的字段：`density`（内容密度）、`length`（篇幅档位）——两者都是**大纲缓存键的一部分**，换档即重出大纲，不会拿到旧档的缓存。
+
+## 路由（完整清单）
+> `tools/kb_drift_check.py` 会拿 app.py 的路由逐条核这里，**增删路由请同步改本节**（否则每周漂移报告红）。
+
+- 首页：`GET /`
+- 生成：`POST /api/generate`（可带 `length`/`density`）、`POST /api/import`、`POST /api/import_file`
+- 状态：`GET /api/status`、`GET /api/quality`
 - 分步：`POST /api/stepwise`（开关）、`POST /api/continue`（放行）
-- 修改：`POST /api/refine`（带 `target` 为定点，不带为整篇）、`POST /api/redesign`、`POST /api/slide/<i>/text`、`POST /api/slide/<i>/image`、`POST /api/slide/add`、`POST /api/slide/reorder`、`DELETE /api/slide/<i>`
-- 风格/模板：`POST /api/brand`、`GET /api/templates`、`POST /api/template/select`、`POST /api/template/analyze`、`POST /api/templates/save`、`POST /api/templates/delete`
-- 模型：`GET|POST /api/models`、`/api/channels*`
-- 导出：`/api/export`（pptx）、`/api/export_pdf`、`/api/export_html`、`/api/export_txt`、`/api/export_animation`、`/api/export_video`
-- 历史/产物：`/api/decks`、`/api/projects`、`/api/projects/load`、`/api/artifacts`
+- 修改：`POST /api/refine`（带 `target` 为定点，不带为整篇）、`POST /api/redesign`、`POST /api/slide/<i>/text`、`POST /api/slide/<i>/image`、`POST /api/slide/<i>/layout`（版式切换）、`POST /api/slide/add`、`POST /api/slide/reorder`、`DELETE /api/slide/<i>/delete`（删至最后一页返 400）
+- 风格/模板：`POST /api/brand`、`GET /api/templates`、`POST /api/template/select`、`POST /api/template/analyze`、`POST /api/templates/save`、`POST /api/templates/delete`、`POST /api/theme`
+- 模型/渠道：`GET|POST /api/models`、`POST /api/channels`、`POST /api/channels/select`、`POST /api/channels/models`、`POST /api/channels/delete`
+- 导出：`POST /api/export`（pptx）、`POST /api/export_pdf`、`POST /api/export_html`、`POST /api/export_txt`、`POST /api/export_animation`、`POST /api/export_video`、`POST /api/thumbnails`（逐页缩略图）、`POST /api/open_in_powerpoint`（`os.startfile` 走文件关联，**零 COM**，不碰任何 COM 守卫）
+- 历史/产物：`GET /api/decks`、`GET /api/projects`、`POST /api/projects/load`、`GET /api/artifacts`
+- **删除（一律移入回收站，不真删）**：`POST /api/decks/delete`、`POST /api/projects/delete`、`POST /api/artifacts/delete`、`POST /api/pptx/delete`
 - **pptx 高亮讲解（与本文件上面那条"AI 生成"流水线独立，状态在 `state["pptx"]`）**：
-  `POST /api/pptx/import`（上传 .pptx → 后台 worker → 播放器）、`GET /pptx/<path>`（服务产物）
-- 静态：`/decks` `/images` `/files` `/videos` `/animation` `/pptx`
+  `POST /api/pptx/import`（上传 .pptx → 后台 worker → 播放器）、`POST /api/pptx/delete`
+- 静态：`GET /decks/<path>`、`GET /images/<path>`、`GET /files/<path>`、`GET /videos/<path>`、`GET /animation/<path>`、`GET /pptx/<path>`、`GET /thumbnails/<path>`
 
 ## 生成流水线
 `outline` → AI 选风格（`state["tpl_style"]` 优先，否则 `style.decide_style`）→ `_gen_images`（含 `critic.review_image` 校验闭环）→ `_design_and_save`（`html_gen`）→ 快照 `output/projects/`。
 
+**篇幅与密度两个档位**（2026-09-14 新增）：入参 `length` / `density` 经 `outline.PAGE_HINTS` 与 `outline.DENSITY_HINTS` 白名单校验（非法值 400），只影响**提示词参数**——`PAGE_HINTS` 把总页数要求参数化（`standard` 8~10 / `extended` 12~15 / `deep` 16~20），`DENSITY_HINTS` 控制每页要点条数与描述字数；两者都进大纲缓存键，故换档必然重出大纲。前端对应 `<select id="length-sel">` / `<select id="density-sel">`。
+
 **配图总开关**：`runtime_config.json` 的 `images` 键（缺省 = 开）。关掉后 `app._without_images` 会清空 `image_prompt` 并把 `image-*` 布局降级（否则设计稿/PPTX 会空出半页图位），`_gen_image_page` 另有一道兜底闸挡住 refine 新加的提示词——即手改配置也绕不过去。生图上游不给力时（慢/质量差）用它一键切纯排版，其余流程不变。
+
+## 删除与回收站
+删除**一律不真删**，先 `shutil.move` 进 `TRASH_DIR`（`output/trash/<分类>/<时间戳>_<原名>`），保留 `TRASH_KEEP_DAYS`（7）天，由 `_trash_cleanup_expired` 在**每次删除时惰性清理**过期项；用户可直接去文件管理器找回。
+
+- `_delete_deck_bundle`：删历史设计稿时联动清理它的**缩略图目录 / 教学动画目录 / 同名前缀视频 / 同源导出 pptx·pdf·txt**，每一类单独成回收站子目录（`decks` / `decks_thumbnails` / `decks_animation` / `videos` / `exports`）。
+- 四条删除路由都做 **`os.path.basename()` 化 + 扩展名白名单 + 存在性校验**，不存在即 404；`/api/decks/delete` 另有 409 闸门——**正在工作台打开的设计稿禁止删除**（`state["html_path"]` 比对，防误删当前稿）。
+- **目录名不用 `.trash`**：实测 Python 3.11 `pathlib` 的 `rglob` 对点开头目录遍历不可靠（老实现遗留的 `output/.trash` 已清理）。
 
 ## 已知风险
 | 风险 | 现状 | 说明 |
@@ -94,10 +111,14 @@
 `.gitignore` 内，新克隆上 M1/M2 的几条验收会静默 skip**，需先跑 `tools/probes/accept_m1.py`）。
 
 ## 验收
-- `.venv/Scripts/python.exe -m pytest tests/ -q` 全过（当前 **1066** 条；`tests/conftest.py` 有 autouse 夹具把 `runtime_config.json` 隔离到临时目录，用例不受本地渠道/开关影响）
-- **pptx 链路的验收要先有素材**：`output/b_multislide.pptx` 与 COM 底图在 `.gitignore` 内，
-  新克隆上 `needs_pptx_src` / `needs_material` 标记的用例会 skip —— 跑
-  `tools/probes/accept_m1.py` 生成底图即可恢复（`accept_m2/m3/m3_shot/m6` 依此类推）
+- `.venv/Scripts/python.exe -m pytest tests/ -q` 全过（当前 **1089 条**；`tests/conftest.py` 有 autouse 夹具把 `runtime_config.json` 隔离到临时目录，用例不受本地渠道/开关影响）
+  - 跑测试请用**临时 basetemp**（如 `--basetemp=%TEMP%/pptgen_pytest`），别在项目根留 `.pytest_tmp`（会污染 `git status`）。
+- **pptx 链路的验收要先有素材**：`output/b_multislide.pptx` 与 `output/spike/m1/` 底图在 `.gitignore` 内，
+  新克隆上 `needs_pptx_src` / `needs_material` 标记的用例会**静默 skip** —— 跑
+  `tools/probes/accept_m1.py` 生成底图即可恢复（`accept_m2/m3/m3_shot/m6` 依此类推）。
+  ⚠️ **`output/spike/` 看起来像临时垃圾，其实 `spike/m1` 是 `test_hl_layout.py` 的素材目录，别删**。
+- 漂移自检：`.venv/Scripts/python.exe tools/kb_drift_check.py`（核路由/模块/测试数，比对 Obsidian 知识库三份文档）
 - `curl http://127.0.0.1:5000/` → 200
 - 端到端：选内置模板生成→设计稿含模板主色；传参考图→生成色贴近识别结果
 - pptx 端到端：`pptgen import → animate → video`（CLI）或工作台「导入 PPTX 高亮讲解」
+- 全功能端到端：`tools/e2e_full_test.py {gen|edit|export|pptx|misc|all}`（需先起工作台）
